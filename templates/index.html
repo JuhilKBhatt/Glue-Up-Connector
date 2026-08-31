@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Glue Up Connector</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; background-color: #f4f4f9; }
+        h1 { color: #333; }
+        .container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .btn { padding: 10px 15px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
+        .btn:hover { background: #0056b3; }
+        pre { background: #eee; padding: 10px; border-radius: 4px; overflow-x: auto; }
+        .error { color: red; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Glue Up API Connector</h1>
+        <p>This is a simple UI for the Glue Up API connector.</p>
+        <button class="btn" onclick="fetchEvents()">Fetch Events</button>
+        
+        <div style="margin-top: 20px;">
+            <h3>Response:</h3>
+            <pre id="output">Waiting for action...</pre>
+        </div>
+    </div>
+
+    <script>
+        async function fetchEvents() {
+            const output = document.getElementById('output');
+            output.textContent = 'Fetching data...';
+            output.className = '';
+            
+            try {
+                const response = await fetch('/api/events');
+                const data = await response.json();
+                
+                if (response.ok) {
+                    output.textContent = JSON.stringify(data, null, 2);
+                } else {
+                    output.textContent = 'Error: ' + data.message;
+                    output.className = 'error';
+                }
+            } catch (error) {
+                output.textContent = 'Network Error: ' + error.message;
+                output.className = 'error';
+            }
+        }
+    </script>
+</body>
+</html>
