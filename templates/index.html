@@ -8,7 +8,7 @@
         body { font-family: Arial, sans-serif; margin: 40px; background-color: #f4f4f9; }
         h1 { color: #333; }
         .container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        .btn { padding: 10px 15px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
+        .btn { padding: 10px 15px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-right: 10px; }
         .btn:hover { background: #0056b3; }
         pre { background: #eee; padding: 10px; border-radius: 4px; overflow-x: auto; }
         .error { color: red; }
@@ -18,7 +18,7 @@
     <div class="container">
         <h1>Glue Up API Connector</h1>
         <p>This is a simple UI for the Glue Up API connector.</p>
-        <button class="btn" onclick="fetchEvents()">Fetch Events</button>
+        <button class="btn" onclick="fetchInactiveContacts()">Find Inactive Contacts</button>
         
         <div style="margin-top: 20px;">
             <h3>Response:</h3>
@@ -27,13 +27,13 @@
     </div>
 
     <script>
-        async function fetchEvents() {
+        async function fetchInactiveContacts() {
             const output = document.getElementById('output');
-            output.textContent = 'Fetching data...';
+            output.textContent = 'Fetching inactive contacts (this may take a while)...';
             output.className = '';
             
             try {
-                const response = await fetch('/api/events');
+                const response = await fetch('/api/inactive-contacts');
                 const data = await response.json();
                 
                 if (response.ok) {
