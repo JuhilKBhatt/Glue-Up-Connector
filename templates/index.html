@@ -19,6 +19,7 @@
         th, td { padding: 10px; border: 1px solid #ddd; text-align: left; }
         th { background-color: #007bff; color: white; }
     </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
     <div class="container">
@@ -57,6 +58,15 @@
             </div>
         </div>
 
+        <div class="filter-bar" id="csvBar" style="display: none; background: #e9ecef; border: 1px solid #ced4da;">
+            <div class="filter-group" style="width: 100%;">
+                <label style="font-weight: bold; color: #dc3545;">API Workaround: Cross-Check with CRM Export</label>
+                <p style="margin: 5px 0; font-size: 14px;">Since Glue Up's API doesn't allow searching the CRM, you can export your active Contacts to a CSV or Excel (.xlsx) file from the Glue Up dashboard and upload it here. We will automatically hide anyone who has already been deleted!</p>
+                <input type="file" id="csvFile" accept=".csv, .xlsx, .xls" onchange="handleFileUpload(event)">
+                <small id="csvStatus" style="color: green; font-weight: bold; margin-top: 5px;"></small>
+            </div>
+        </div>
+
         <div style="margin-top: 20px;">
             <div id="output" style="background: #fff; padding: 10px; border: 1px solid #ddd; border-radius: 4px; overflow-x: auto; min-height: 50px;">Waiting for action...</div>
         </div>
@@ -64,11 +74,13 @@
 
     <script>
         let allContacts = []; // Store fetched data for frontend filtering
+        let activeCrmEmails = null; // Set of active emails from CSV/XLSX
 
         async function fetchInactiveContacts() {
             const output = document.getElementById('output');
             output.innerHTML = '<em>Fetching all single-event contacts across historical events (this may take a minute)...</em>';
             document.getElementById('filterBar').style.display = 'none';
+            document.getElementById('csvBar').style.display = 'none';
             
             try {
                 const response = await fetch('/api/inactive-contacts');
@@ -77,6 +89,7 @@
                 if (response.ok) {
                     allContacts = data.data;
                     document.getElementById('filterBar').style.display = 'flex';
+                    document.getElementById('csvBar').style.display = 'flex';
                     applyFilters(); // Render initial table
                 } else {
                     output.textContent = 'Error: ' + data.message;
@@ -85,6 +98,46 @@
             } catch (error) {
                 output.textContent = 'Network Error: ' + error.message;
                 output.className = 'error';
+            }
+        }
+
+        function extractEmailsFromText(text) {
+            const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/gi;
+            const foundEmails = text.match(emailRegex) || [];
+            activeCrmEmails = new Set(foundEmails.map(em => em.toLowerCase()));
+            document.getElementById('csvStatus').innerText = `Successfully loaded ${activeCrmEmails.size} active emails! Applying filter...`;
+            applyFilters();
+        }
+
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const filename = file.name.toLowerCase();
+            const reader = new FileReader();
+            
+            reader.onload = function(e) {
+                if (filename.endsWith('.csv')) {
+                    extractEmailsFromText(e.target.result);
+                } else {
+                    // Use SheetJS to parse Excel file
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, {type: 'array'});
+                    
+                    let allText = "";
+                    workbook.SheetNames.forEach(sheetName => {
+                        const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]);
+                        allText += csv + "\n";
+                    });
+                    
+                    extractEmailsFromText(allText);
+                }
+            };
+            
+            if (filename.endsWith('.csv')) {
+                reader.readAsText(file);
+            } else {
+                reader.readAsArrayBuffer(file);
             }
         }
 
@@ -114,6 +167,13 @@
                 if (search) {
                     const searchStr = `${contact.name} ${contact.email} ${contact.event_title}`.toLowerCase();
                     if (!searchStr.includes(search)) return false;
+                }
+
+                // 5. CSV Cross-Check Filter
+                if (activeCrmEmails !== null) {
+                    if (!activeCrmEmails.has(contact.email.toLowerCase())) {
+                        return false; // Hide if they are NOT in the active CSV export
+                    }
                 }
 
                 return true;
