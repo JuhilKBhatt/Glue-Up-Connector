@@ -33,17 +33,14 @@ class GlueUpAPI:
             "Content-Type": "application/json"
         }
 
-    def get_recent_events(self, months=6):
-        """Fetches all events and filters for the last N months in Python."""
+    def get_all_events(self):
+        """Fetches all published events in the organization's history."""
         endpoint = "/event/list"
         url = f"{self.base_url}{endpoint}"
         
-        six_months_ago = datetime.now(timezone.utc) - timedelta(days=30 * months)
-        six_months_ago_ms = int(six_months_ago.timestamp() * 1000)
-        
         payload = {
             "projection": ["id", "title", "startDateTime", "endDateTime", "published"],
-            "limit": 500,  # Grab a large batch to ensure we cover 6 months
+            "limit": 500,  # Their total history is ~115 events, so 500 covers everything
             "offset": 0,
             "filter": [
                 {
@@ -58,18 +55,9 @@ class GlueUpAPI:
         response = requests.post(url, headers=self.get_headers("POST", endpoint), json=payload)
         
         if response.status_code == 200:
-            all_events = response.json().get('value', [])
-            
-            # Post-filter in Python
-            recent_events = []
-            for ev in all_events:
-                start_time = ev.get('startDateTime')
-                if start_time and start_time >= six_months_ago_ms:
-                    recent_events.append(ev)
-                    
-            return recent_events
+            return response.json().get('value', [])
         
-        print(f"Error fetching recent events: {response.status_code} - {response.text}")
+        print(f"Error fetching events: {response.status_code} - {response.text}")
         return []
 
     def get_event_attendees(self, event_id):
@@ -95,17 +83,18 @@ if __name__ == "__main__":
     load_dotenv()
     api = GlueUpAPI()
     
-    print(f"--- Fetching Events from the Past 6 Months ---")
-    events = api.get_recent_events(months=6)
+    print("--- Fetching ALL Events in History ---")
+    events = api.get_all_events()
     
     if events:
-        print(f"Found {len(events)} events. Gathering all attendees...\n")
+        print(f"Found {len(events)} events. Gathering all attendees to find inactive contacts...\n")
         
-        attendee_counts = {}
-        attendee_details = {}
+        attendee_data = {}
         
         for ev in events:
             event_id = ev.get('id')
+            event_time = ev.get('startDateTime', 0)
+            
             attendees = api.get_event_attendees(event_id)
             
             for att in attendees:
@@ -118,23 +107,36 @@ if __name__ == "__main__":
                 
                 email = email.lower().strip()
                 
-                if email not in attendee_counts:
-                    attendee_counts[email] = 0
-                    first = att.get("givenName", "")
-                    last = att.get("familyName", "")
-                    attendee_details[email] = f"{first} {last}"
+                if email not in attendee_data:
+                    attendee_data[email] = {
+                        "name": f"{att.get('givenName', '')} {att.get('familyName', '')}".strip(),
+                        "count": 0,
+                        "latest_event_time": 0
+                    }
                 
-                attendee_counts[email] += 1
+                attendee_data[email]["count"] += 1
+                if event_time > attendee_data[email]["latest_event_time"]:
+                    attendee_data[email]["latest_event_time"] = event_time
                 
-        # Filter for attendees who registered exactly once
-        single_registrants = [email for email, count in attendee_counts.items() if count == 1]
+        # Calculate the cutoff timestamp (6 months ago)
+        six_months_ago = datetime.now(timezone.utc) - timedelta(days=180)
+        cutoff_ms = int(six_months_ago.timestamp() * 1000)
         
-        print(f"Total Unique Attendees across all events: {len(attendee_counts)}")
-        print(f"Attendees who registered EXACTLY ONCE: {len(single_registrants)}\n")
+        # Filter for attendees who:
+        # 1. Registered exactly once
+        # 2. That single registration was more than 6 months ago
+        inactive_contacts = []
+        for email, data in attendee_data.items():
+            if data["count"] == 1 and data["latest_event_time"] < cutoff_ms:
+                inactive_contacts.append((email, data["name"], data["latest_event_time"]))
         
-        print("List of Single-Registration Attendees:")
-        for email in single_registrants:
-            print(f" - {attendee_details[email]} ({email})")
+        print(f"Total Unique Attendees across all history: {len(attendee_data)}")
+        print(f"Inactive Contacts (1 registration EVER, > 6 months ago): {len(inactive_contacts)}\n")
+        
+        print("List of Inactive Contacts (Safe to purge for quota):")
+        for email, name, event_time in inactive_contacts:
+            date_str = datetime.fromtimestamp(event_time / 1000.0, tz=timezone.utc).strftime('%Y-%m-%d')
+            print(f" - {name} ({email}) | Event Date: {date_str}")
             
     else:
         print("No events found.")
