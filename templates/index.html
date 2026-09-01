@@ -1,200 +1,165 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Glue Up Connector</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 40px; background-color: #f4f4f9; }
-        h1 { color: #333; }
-        .container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        .nav { margin-bottom: 20px; }
-        .nav a { margin-right: 15px; text-decoration: none; color: #007bff; font-weight: bold; }
-        .nav a:hover { text-decoration: underline; }
-        .btn { padding: 10px 15px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-right: 10px; }
-        .btn:hover { background: #0056b3; }
-        .filter-bar { background: #f8f9fa; padding: 15px; border-radius: 4px; margin: 20px 0; display: flex; gap: 15px; align-items: center; flex-wrap: wrap; }
-        .filter-group { display: flex; flex-direction: column; gap: 5px; }
-        .filter-group select, .filter-group input { padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
-        pre { background: #eee; padding: 10px; border-radius: 4px; overflow-x: auto; }
-        .error { color: red; }
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        th, td { padding: 10px; border: 1px solid #ddd; text-align: left; }
-        th { background-color: #007bff; color: white; }
-        tbody tr:nth-child(odd) { background-color: #f2f2f2; }
-    </style>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-</head>
-<body>
-    <div class="nav">
-        <a href="/dedupe">Go to Duplicate Predictor &rarr;</a>
-    </div>
+{% extends "base.html" %}
 
-    <div class="container">
-        <h1>Glue Up CRM Cleanup</h1>
+{% block title %}CRM Cleanup - Glue Up Tools{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0">CRM Cleanup</h5>
+    </div>
+    <div class="card-body">
         <p>This tool scans your entire Glue Up history (all events and attendees). It identifies highly inactive contacts who have <strong>only registered for exactly one event</strong>. These contacts are safe to purge to free up your CRM quota.</p>
-        <button class="btn" onclick="fetchInactiveContacts()">Scan for Inactive Contacts</button>
+        <button class="btn btn-primary mb-4" onclick="fetchInactiveContacts()">Scan for Inactive Contacts</button>
         
-        <div class="filter-bar" id="filterBar" style="display: none;">
-            <div class="filter-group">
-                <label>Inactivity Period</label>
-                <select id="filterMonths" onchange="applyFilters()">
+        <div class="row mb-4" id="filterBar" style="display: none;">
+            <div class="col-md-3">
+                <label class="form-label">Inactivity Period</label>
+                <select class="form-select" id="filterMonths" onchange="applyFilters()">
                     <option value="6">More than 6 months ago</option>
                     <option value="12">More than 12 months ago</option>
                     <option value="0">All time (Any date)</option>
                 </select>
             </div>
-            <div class="filter-group">
-                <label>Event Type</label>
-                <select id="filterEventType" onchange="applyFilters()">
+            <div class="col-md-3">
+                <label class="form-label">Event Type</label>
+                <select class="form-select" id="filterEventType" onchange="applyFilters()">
                     <option value="all">All Events</option>
                     <option value="public">Public Events</option>
                     <option value="private">Private Events</option>
                 </select>
             </div>
-            <div class="filter-group">
-                <label>Search</label>
-                <input type="text" id="filterSearch" placeholder="Name, Email, or Event..." onkeyup="applyFilters()">
-            </div>
-            <div class="filter-group">
-                <label>CRM Status</label>
-                <select id="filterCrm" onchange="applyFilters()">
+            <div class="col-md-3">
+                <label class="form-label">CRM Status</label>
+                <select class="form-select" id="filterCrm" onchange="applyFilters()">
                     <option value="all">All (Deleted & Active)</option>
                     <option value="active">Active CRM ID Only</option>
                     <option value="deleted">Deleted (No ID) Only</option>
                 </select>
             </div>
-        </div>
-
-        <div class="filter-bar" id="csvBar" style="display: none; background: #e9ecef; border: 1px solid #ced4da;">
-            <div class="filter-group" style="width: 100%;">
-                <label style="font-weight: bold; color: #dc3545;">API Workaround: Cross-Check with CRM Export</label>
-                <p style="margin: 5px 0; font-size: 14px;">Since Glue Up's API doesn't allow searching the CRM, you can export your active Contacts to a CSV or Excel (.xlsx) file from the Glue Up dashboard and upload it here. We will automatically hide anyone who has already been deleted!</p>
-                <input type="file" id="csvFile" accept=".csv, .xlsx, .xls" onchange="handleFileUpload(event)">
-                <small id="csvStatus" style="color: green; font-weight: bold; margin-top: 5px;"></small>
+            <div class="col-md-3">
+                <label class="form-label">Search</label>
+                <input type="text" class="form-control" id="filterSearch" placeholder="Name, Email, or Event..." onkeyup="applyFilters()">
             </div>
         </div>
 
-        <div style="margin-top: 20px;">
-            <div id="output" style="background: #fff; padding: 10px; border: 1px solid #ddd; border-radius: 4px; overflow-x: auto; min-height: 50px;">Waiting for action...</div>
+        <div class="alert alert-secondary" id="csvBar" style="display: none;">
+            <h6 class="alert-heading text-danger fw-bold"><i class="fa-solid fa-triangle-exclamation"></i> API Workaround: Cross-Check with CRM Export</h6>
+            <p class="mb-2 small">Since Glue Up's API doesn't allow searching the CRM, you can export your active Contacts to a CSV or Excel (.xlsx) file from the Glue Up dashboard and upload it here. We will automatically hide anyone who has already been deleted!</p>
+            <input type="file" class="form-control form-control-sm w-50" id="csvFile" accept=".csv, .xlsx, .xls" onchange="handleFileUpload(event)">
+            <small id="csvStatus" class="text-success fw-bold mt-2 d-block"></small>
         </div>
+
+        <div id="output" class="bg-light p-3 border rounded">Waiting for action...</div>
     </div>
+</div>
+{% endblock %}
 
-    <script>
-        let allContacts = []; // Store fetched data for frontend filtering
-        let activeCrmEmails = null; // Set of active emails from CSV/XLSX
+{% block extra_js %}
+<script>
+    let allContacts = []; 
+    let activeCrmEmails = null; 
 
-        async function fetchInactiveContacts() {
-            const output = document.getElementById('output');
-            output.innerHTML = '<em>Fetching all single-event contacts across historical events (this may take a minute)...</em>';
-            document.getElementById('filterBar').style.display = 'none';
-            document.getElementById('csvBar').style.display = 'none';
+    async function fetchInactiveContacts() {
+        const output = document.getElementById('output');
+        output.innerHTML = '<div class="text-center"><div class="spinner-border text-primary" role="status"></div><p class="mt-2 text-muted">Fetching all single-event contacts across historical events (this may take a minute)...</p></div>';
+        document.getElementById('filterBar').style.display = 'none';
+        document.getElementById('csvBar').style.display = 'none';
+        
+        try {
+            const response = await fetch('/api/inactive-contacts');
+            const data = await response.json();
             
-            try {
-                const response = await fetch('/api/inactive-contacts');
-                const data = await response.json();
-                
-                if (response.ok) {
-                    allContacts = data.data;
-                    document.getElementById('filterBar').style.display = 'flex';
-                    document.getElementById('csvBar').style.display = 'flex';
-                    applyFilters(); // Render initial table
-                } else {
-                    output.textContent = 'Error: ' + data.message;
-                    output.className = 'error';
-                }
-            } catch (error) {
-                output.textContent = 'Network Error: ' + error.message;
-                output.className = 'error';
-            }
-        }
-
-        function extractEmailsFromText(text) {
-            const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/gi;
-            const foundEmails = text.match(emailRegex) || [];
-            activeCrmEmails = new Set(foundEmails.map(em => em.toLowerCase()));
-            document.getElementById('csvStatus').innerText = `Successfully loaded ${activeCrmEmails.size} active emails! Applying filter...`;
-            applyFilters();
-        }
-
-        function handleFileUpload(event) {
-            const file = event.target.files[0];
-            if (!file) return;
-
-            const filename = file.name.toLowerCase();
-            const reader = new FileReader();
-            
-            reader.onload = function(e) {
-                if (filename.endsWith('.csv')) {
-                    extractEmailsFromText(e.target.result);
-                } else {
-                    // Use SheetJS to parse Excel file
-                    const data = new Uint8Array(e.target.result);
-                    const workbook = XLSX.read(data, {type: 'array'});
-                    
-                    let allText = "";
-                    workbook.SheetNames.forEach(sheetName => {
-                        const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]);
-                        allText += csv + "\n";
-                    });
-                    
-                    extractEmailsFromText(allText);
-                }
-            };
-            
-            if (filename.endsWith('.csv')) {
-                reader.readAsText(file);
+            if (response.ok) {
+                allContacts = data.data;
+                document.getElementById('filterBar').style.display = 'flex';
+                document.getElementById('csvBar').style.display = 'block';
+                applyFilters(); 
             } else {
-                reader.readAsArrayBuffer(file);
+                output.innerHTML = `<div class="alert alert-danger">Error: ${data.message}</div>`;
             }
+        } catch (error) {
+            output.innerHTML = `<div class="alert alert-danger">Network Error: ${error.message}</div>`;
+        }
+    }
+
+    function extractEmailsFromText(text) {
+        const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/gi;
+        const foundEmails = text.match(emailRegex) || [];
+        activeCrmEmails = new Set(foundEmails.map(em => em.toLowerCase()));
+        document.getElementById('csvStatus').innerText = `Successfully loaded ${activeCrmEmails.size} active emails! Applying filter...`;
+        applyFilters();
+    }
+
+    function handleFileUpload(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const filename = file.name.toLowerCase();
+        const reader = new FileReader();
+        
+        reader.onload = function(e) {
+            if (filename.endsWith('.csv')) {
+                extractEmailsFromText(e.target.result);
+            } else {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, {type: 'array'});
+                
+                let allText = "";
+                workbook.SheetNames.forEach(sheetName => {
+                    const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]);
+                    allText += csv + "\n";
+                });
+                
+                extractEmailsFromText(allText);
+            }
+        };
+        
+        if (filename.endsWith('.csv')) {
+            reader.readAsText(file);
+        } else {
+            reader.readAsArrayBuffer(file);
+        }
+    }
+
+    function applyFilters() {
+        const output = document.getElementById('output');
+        const months = parseInt(document.getElementById('filterMonths').value);
+        const eventType = document.getElementById('filterEventType').value;
+        const search = document.getElementById('filterSearch').value.toLowerCase();
+        const crmStatus = document.getElementById('filterCrm').value;
+
+        const cutoffMs = months === 0 ? Date.now() : Date.now() - (months * 30.44 * 24 * 60 * 60 * 1000);
+
+        const filtered = allContacts.filter(contact => {
+            if (contact.event_time_ms >= cutoffMs) return false;
+            if (eventType === 'public' && !contact.is_public) return false;
+            if (eventType === 'private' && contact.is_public) return false;
+            
+            const hasId = contact.contact_id !== "N/A" && contact.contact_id;
+            if (crmStatus === 'active' && !hasId) return false;
+            if (crmStatus === 'deleted' && hasId) return false;
+
+            if (search) {
+                const searchStr = `${contact.name} ${contact.email} ${contact.event_title}`.toLowerCase();
+                if (!searchStr.includes(search)) return false;
+            }
+
+            if (activeCrmEmails !== null) {
+                if (!activeCrmEmails.has(contact.email.toLowerCase())) return false;
+            }
+
+            return true;
+        });
+
+        if (filtered.length === 0) {
+            output.innerHTML = '<div class="alert alert-warning">No contacts match your filters.</div>';
+            return;
         }
 
-        function applyFilters() {
-            const output = document.getElementById('output');
-            const months = parseInt(document.getElementById('filterMonths').value);
-            const eventType = document.getElementById('filterEventType').value;
-            const search = document.getElementById('filterSearch').value.toLowerCase();
-            const crmStatus = document.getElementById('filterCrm').value;
-
-            const cutoffMs = months === 0 ? Date.now() : Date.now() - (months * 30.44 * 24 * 60 * 60 * 1000);
-
-            const filtered = allContacts.filter(contact => {
-                // 1. Date Filter
-                if (contact.event_time_ms >= cutoffMs) return false;
-
-                // 2. Event Type Filter
-                if (eventType === 'public' && !contact.is_public) return false;
-                if (eventType === 'private' && contact.is_public) return false;
-
-                // 3. CRM Status Filter
-                const hasId = contact.contact_id !== "N/A" && contact.contact_id;
-                if (crmStatus === 'active' && !hasId) return false;
-                if (crmStatus === 'deleted' && hasId) return false;
-
-                // 4. Search Filter
-                if (search) {
-                    const searchStr = `${contact.name} ${contact.email} ${contact.event_title}`.toLowerCase();
-                    if (!searchStr.includes(search)) return false;
-                }
-
-                // 5. CSV Cross-Check Filter
-                if (activeCrmEmails !== null) {
-                    if (!activeCrmEmails.has(contact.email.toLowerCase())) {
-                        return false; // Hide if they are NOT in the active CSV export
-                    }
-                }
-
-                return true;
-            });
-
-            if (filtered.length === 0) {
-                output.innerHTML = '<strong>No contacts match your filters.</strong>';
-                return;
-            }
-
-            let tableHTML = `
-                <table>
-                    <thead>
+        let tableHTML = `
+            <div class="table-responsive">
+                <table class="table table-hover table-striped mb-0 bg-white">
+                    <thead class="table-light">
                         <tr>
                             <th>Name</th>
                             <th>Email</th>
@@ -204,27 +169,26 @@
                         </tr>
                     </thead>
                     <tbody>
+        `;
+        
+        filtered.forEach(contact => {
+            let contactIdDisplay = contact.contact_id === "N/A" || !contact.contact_id ? '<span class="text-muted fst-italic">None / Deleted</span>' : contact.contact_id;
+            let eventBadge = contact.is_public ? '<span class="badge bg-success ms-2">Public</span>' : '<span class="badge bg-danger ms-2">Private</span>';
+            
+            tableHTML += `
+                <tr>
+                    <td class="align-middle">${contact.name}</td>
+                    <td class="align-middle">${contact.email}</td>
+                    <td class="align-middle">${contact.event_title} ${eventBadge}</td>
+                    <td class="align-middle">${contact.event_date}</td>
+                    <td class="align-middle">${contactIdDisplay}</td>
+                </tr>
             `;
-            
-            filtered.forEach(contact => {
-                let contactIdDisplay = contact.contact_id === "N/A" || !contact.contact_id ? "<em>None / Deleted</em>" : contact.contact_id;
-                let eventBadge = contact.is_public ? '<span style="background:#28a745;color:white;padding:2px 5px;border-radius:3px;font-size:12px;">Public</span>' : '<span style="background:#dc3545;color:white;padding:2px 5px;border-radius:3px;font-size:12px;">Private</span>';
-                
-                tableHTML += `
-                    <tr>
-                        <td>${contact.name}</td>
-                        <td>${contact.email}</td>
-                        <td>${contact.event_title} ${eventBadge}</td>
-                        <td>${contact.event_date}</td>
-                        <td>${contactIdDisplay}</td>
-                    </tr>
-                `;
-            });
-            
-            tableHTML += `</tbody></table>`;
-            
-            output.innerHTML = `<p><strong>Showing ${filtered.length} contacts</strong> matching your criteria:</p>` + tableHTML;
-        }
-    </script>
-</body>
-</html>
+        });
+        
+        tableHTML += `</tbody></table></div>`;
+        
+        output.innerHTML = `<p class="fw-bold mb-3">Showing ${filtered.length} contacts matching your criteria:</p>` + tableHTML;
+    }
+</script>
+{% endblock %}
