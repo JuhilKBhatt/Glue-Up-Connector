@@ -10,65 +10,74 @@
         .container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
         .btn { padding: 10px 15px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-right: 10px; }
         .btn:hover { background: #0056b3; }
+        .filter-bar { background: #f8f9fa; padding: 15px; border-radius: 4px; margin: 20px 0; display: flex; gap: 15px; align-items: center; flex-wrap: wrap; }
+        .filter-group { display: flex; flex-direction: column; gap: 5px; }
+        .filter-group select, .filter-group input { padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
         pre { background: #eee; padding: 10px; border-radius: 4px; overflow-x: auto; }
         .error { color: red; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { padding: 10px; border: 1px solid #ddd; text-align: left; }
+        th { background-color: #007bff; color: white; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Glue Up CRM Cleanup</h1>
-        <p>This tool scans your entire Glue Up history (all events and attendees). It identifies highly inactive contacts who have <strong>only registered for exactly one event</strong>, and that single event was <strong>more than 6 months ago</strong>. These contacts are safe to purge to free up your CRM quota.</p>
+        <p>This tool scans your entire Glue Up history (all events and attendees). It identifies highly inactive contacts who have <strong>only registered for exactly one event</strong>. These contacts are safe to purge to free up your CRM quota.</p>
         <button class="btn" onclick="fetchInactiveContacts()">Scan for Inactive Contacts</button>
         
+        <div class="filter-bar" id="filterBar" style="display: none;">
+            <div class="filter-group">
+                <label>Inactivity Period</label>
+                <select id="filterMonths" onchange="applyFilters()">
+                    <option value="6">More than 6 months ago</option>
+                    <option value="12">More than 12 months ago</option>
+                    <option value="0">All time (Any date)</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Event Type</label>
+                <select id="filterEventType" onchange="applyFilters()">
+                    <option value="all">All Events</option>
+                    <option value="public">Public Events</option>
+                    <option value="private">Private Events</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Search</label>
+                <input type="text" id="filterSearch" placeholder="Name, Email, or Event..." onkeyup="applyFilters()">
+            </div>
+            <div class="filter-group">
+                <label>CRM Status</label>
+                <select id="filterCrm" onchange="applyFilters()">
+                    <option value="all">All (Deleted & Active)</option>
+                    <option value="active">Active CRM ID Only</option>
+                    <option value="deleted">Deleted (No ID) Only</option>
+                </select>
+            </div>
+        </div>
+
         <div style="margin-top: 20px;">
-            <h3>Results:</h3>
             <div id="output" style="background: #fff; padding: 10px; border: 1px solid #ddd; border-radius: 4px; overflow-x: auto; min-height: 50px;">Waiting for action...</div>
         </div>
     </div>
 
     <script>
+        let allContacts = []; // Store fetched data for frontend filtering
+
         async function fetchInactiveContacts() {
             const output = document.getElementById('output');
-            output.innerHTML = '<em>Fetching inactive contacts across all historical events (this may take a minute)...</em>';
-            output.className = '';
+            output.innerHTML = '<em>Fetching all single-event contacts across historical events (this may take a minute)...</em>';
+            document.getElementById('filterBar').style.display = 'none';
             
             try {
                 const response = await fetch('/api/inactive-contacts');
                 const data = await response.json();
                 
                 if (response.ok) {
-                    const contacts = data.data;
-                    if (contacts.length === 0) {
-                        output.innerHTML = '<strong>No inactive contacts found!</strong>';
-                        return;
-                    }
-                    
-                    let tableHTML = `
-                        <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
-                            <thead>
-                                <tr style="background-color: #007bff; color: white;">
-                                    <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">Name</th>
-                                    <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">Email</th>
-                                    <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">Only Event Attended</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                    `;
-                    
-                    contacts.forEach(contact => {
-                        tableHTML += `
-                            <tr>
-                                <td style="padding: 10px; border: 1px solid #ddd;">${contact.name}</td>
-                                <td style="padding: 10px; border: 1px solid #ddd;">${contact.email}</td>
-                                <td style="padding: 10px; border: 1px solid #ddd;">${contact.event_date}</td>
-                            </tr>
-                        `;
-                    });
-                    
-                    tableHTML += `</tbody></table>`;
-                    
-                    output.innerHTML = `<p><strong>Found ${contacts.length} inactive contacts</strong> (1 registration ever, > 6 months ago):</p>` + tableHTML;
-                    
+                    allContacts = data.data;
+                    document.getElementById('filterBar').style.display = 'flex';
+                    applyFilters(); // Render initial table
                 } else {
                     output.textContent = 'Error: ' + data.message;
                     output.className = 'error';
@@ -77,6 +86,76 @@
                 output.textContent = 'Network Error: ' + error.message;
                 output.className = 'error';
             }
+        }
+
+        function applyFilters() {
+            const output = document.getElementById('output');
+            const months = parseInt(document.getElementById('filterMonths').value);
+            const eventType = document.getElementById('filterEventType').value;
+            const search = document.getElementById('filterSearch').value.toLowerCase();
+            const crmStatus = document.getElementById('filterCrm').value;
+
+            const cutoffMs = months === 0 ? Date.now() : Date.now() - (months * 30.44 * 24 * 60 * 60 * 1000);
+
+            const filtered = allContacts.filter(contact => {
+                // 1. Date Filter
+                if (contact.event_time_ms >= cutoffMs) return false;
+
+                // 2. Event Type Filter
+                if (eventType === 'public' && !contact.is_public) return false;
+                if (eventType === 'private' && contact.is_public) return false;
+
+                // 3. CRM Status Filter
+                const hasId = contact.contact_id !== "N/A" && contact.contact_id;
+                if (crmStatus === 'active' && !hasId) return false;
+                if (crmStatus === 'deleted' && hasId) return false;
+
+                // 4. Search Filter
+                if (search) {
+                    const searchStr = `${contact.name} ${contact.email} ${contact.event_title}`.toLowerCase();
+                    if (!searchStr.includes(search)) return false;
+                }
+
+                return true;
+            });
+
+            if (filtered.length === 0) {
+                output.innerHTML = '<strong>No contacts match your filters.</strong>';
+                return;
+            }
+
+            let tableHTML = `
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Email</th>
+                            <th>Event Attended</th>
+                            <th>Event Date</th>
+                            <th>CRM Contact ID</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+            
+            filtered.forEach(contact => {
+                let contactIdDisplay = contact.contact_id === "N/A" || !contact.contact_id ? "<em>None / Deleted</em>" : contact.contact_id;
+                let eventBadge = contact.is_public ? '<span style="background:#28a745;color:white;padding:2px 5px;border-radius:3px;font-size:12px;">Public</span>' : '<span style="background:#dc3545;color:white;padding:2px 5px;border-radius:3px;font-size:12px;">Private</span>';
+                
+                tableHTML += `
+                    <tr>
+                        <td>${contact.name}</td>
+                        <td>${contact.email}</td>
+                        <td>${contact.event_title} ${eventBadge}</td>
+                        <td>${contact.event_date}</td>
+                        <td>${contactIdDisplay}</td>
+                    </tr>
+                `;
+            });
+            
+            tableHTML += `</tbody></table>`;
+            
+            output.innerHTML = `<p><strong>Showing ${filtered.length} contacts</strong> matching your criteria:</p>` + tableHTML;
         }
     </script>
 </body>

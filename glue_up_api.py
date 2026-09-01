@@ -39,7 +39,7 @@ class GlueUpAPI:
         url = f"{self.base_url}{endpoint}"
         
         payload = {
-            "projection": ["id", "title", "startDateTime", "endDateTime", "published"],
+            "projection": ["id", "title", "startDateTime", "endDateTime", "published", "openToPublic"],
             "limit": 500,  # Their total history is ~115 events, so 500 covers everything
             "offset": 0,
             "filter": [
@@ -66,7 +66,7 @@ class GlueUpAPI:
         url = f"{self.base_url}{endpoint}"
         
         payload = {
-            "projection": ["id", "givenName", "familyName", "emailAddress"],
+            "projection": ["id", "givenName", "familyName", "emailAddress", "contactId"],
             "limit": 1000,
             "offset": 0
         }
@@ -82,7 +82,7 @@ class GlueUpAPI:
     def find_inactive_contacts(self):
         """
         Fetches all events and attendees, returning a list of contacts who have
-        only registered for exactly one event EVER, and that event was > 6 months ago.
+        only registered for exactly one event EVER. Provides metadata for frontend filtering.
         """
         events = self.get_all_events()
         if not events:
@@ -92,6 +92,8 @@ class GlueUpAPI:
         for ev in events:
             event_id = ev.get('id')
             event_time = ev.get('startDateTime', 0)
+            event_title = ev.get('title', 'Unknown Event')
+            is_public = ev.get('openToPublic', True)
             
             attendees = self.get_event_attendees(event_id)
             for att in attendees:
@@ -107,25 +109,30 @@ class GlueUpAPI:
                     attendee_data[email] = {
                         "name": f"{att.get('givenName', '')} {att.get('familyName', '')}".strip(),
                         "count": 0,
-                        "latest_event_time": 0
+                        "latest_event_time": 0,
+                        "contact_id": att.get("contactId", "N/A"),
+                        "event_title": "",
+                        "is_public": True
                     }
                 
                 attendee_data[email]["count"] += 1
-                if event_time > attendee_data[email]["latest_event_time"]:
+                if event_time >= attendee_data[email]["latest_event_time"]:
                     attendee_data[email]["latest_event_time"] = event_time
+                    attendee_data[email]["event_title"] = event_title
+                    attendee_data[email]["is_public"] = is_public
                     
-        # Calculate the cutoff timestamp (6 months ago)
-        six_months_ago = datetime.now(timezone.utc) - timedelta(days=180)
-        cutoff_ms = int(six_months_ago.timestamp() * 1000)
-        
         inactive_contacts = []
         for email, data in attendee_data.items():
-            if data["count"] == 1 and data["latest_event_time"] < cutoff_ms:
+            if data["count"] == 1:
                 date_str = datetime.fromtimestamp(data["latest_event_time"] / 1000.0, tz=timezone.utc).strftime('%Y-%m-%d')
                 inactive_contacts.append({
                     "email": email,
                     "name": data["name"],
-                    "event_date": date_str
+                    "event_date": date_str,
+                    "event_time_ms": data["latest_event_time"],
+                    "event_title": data["event_title"],
+                    "is_public": data["is_public"],
+                    "contact_id": data["contact_id"]
                 })
                 
         return inactive_contacts
