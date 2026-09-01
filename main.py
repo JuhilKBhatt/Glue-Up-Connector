@@ -16,7 +16,7 @@ def index():
 def api_get_inactive_contacts():
     try:
         api = GlueUpAPI()
-        flagged_contacts = api.get_inactive_contacts()
+        flagged_contacts = api.find_inactive_contacts()
         return jsonify({"status": "success", "data": flagged_contacts})
     except ValueError as ve:
         return jsonify({"status": "error", "message": str(ve)}), 400
@@ -25,4 +25,4 @@ def api_get_inactive_contacts():
 
 if __name__ == "__main__":
     # host='0.0.0.0' is required for Docker port forwarding to work
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5001, debug=True)

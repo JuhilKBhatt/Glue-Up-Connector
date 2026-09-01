@@ -79,32 +79,28 @@ class GlueUpAPI:
         print(f"Error fetching attendees for event {event_id}: {response.status_code} - {response.text}")
         return []
 
-if __name__ == "__main__":
-    load_dotenv()
-    api = GlueUpAPI()
-    
-    print("--- Fetching ALL Events in History ---")
-    events = api.get_all_events()
-    
-    if events:
-        print(f"Found {len(events)} events. Gathering all attendees to find inactive contacts...\n")
-        
+    def find_inactive_contacts(self):
+        """
+        Fetches all events and attendees, returning a list of contacts who have
+        only registered for exactly one event EVER, and that event was > 6 months ago.
+        """
+        events = self.get_all_events()
+        if not events:
+            return []
+            
         attendee_data = {}
-        
         for ev in events:
             event_id = ev.get('id')
             event_time = ev.get('startDateTime', 0)
             
-            attendees = api.get_event_attendees(event_id)
-            
+            attendees = self.get_event_attendees(event_id)
             for att in attendees:
-                # Extract email
                 email_obj = att.get("emailAddress", {})
                 email = email_obj.get("value", "") if isinstance(email_obj, dict) else email_obj
                 
                 if not email:
-                    continue  # Skip if no email is provided
-                
+                    continue
+                    
                 email = email.lower().strip()
                 
                 if email not in attendee_data:
@@ -117,26 +113,34 @@ if __name__ == "__main__":
                 attendee_data[email]["count"] += 1
                 if event_time > attendee_data[email]["latest_event_time"]:
                     attendee_data[email]["latest_event_time"] = event_time
-                
+                    
         # Calculate the cutoff timestamp (6 months ago)
         six_months_ago = datetime.now(timezone.utc) - timedelta(days=180)
         cutoff_ms = int(six_months_ago.timestamp() * 1000)
         
-        # Filter for attendees who:
-        # 1. Registered exactly once
-        # 2. That single registration was more than 6 months ago
         inactive_contacts = []
         for email, data in attendee_data.items():
             if data["count"] == 1 and data["latest_event_time"] < cutoff_ms:
-                inactive_contacts.append((email, data["name"], data["latest_event_time"]))
-        
-        print(f"Total Unique Attendees across all history: {len(attendee_data)}")
+                date_str = datetime.fromtimestamp(data["latest_event_time"] / 1000.0, tz=timezone.utc).strftime('%Y-%m-%d')
+                inactive_contacts.append({
+                    "email": email,
+                    "name": data["name"],
+                    "event_date": date_str
+                })
+                
+        return inactive_contacts
+
+if __name__ == "__main__":
+    load_dotenv()
+    api = GlueUpAPI()
+    
+    print("--- Fetching ALL Events in History ---")
+    inactive_contacts = api.find_inactive_contacts()
+    
+    if inactive_contacts:
         print(f"Inactive Contacts (1 registration EVER, > 6 months ago): {len(inactive_contacts)}\n")
-        
         print("List of Inactive Contacts (Safe to purge for quota):")
-        for email, name, event_time in inactive_contacts:
-            date_str = datetime.fromtimestamp(event_time / 1000.0, tz=timezone.utc).strftime('%Y-%m-%d')
-            print(f" - {name} ({email}) | Event Date: {date_str}")
-            
+        for contact in inactive_contacts:
+            print(f" - {contact['name']} ({contact['email']}) | Event Date: {contact['event_date']}")
     else:
-        print("No events found.")
+        print("No inactive contacts found or no events returned.")

@@ -16,20 +16,20 @@
 </head>
 <body>
     <div class="container">
-        <h1>Glue Up API Connector</h1>
-        <p>This is a simple UI for the Glue Up API connector.</p>
-        <button class="btn" onclick="fetchInactiveContacts()">Find Inactive Contacts</button>
+        <h1>Glue Up CRM Cleanup</h1>
+        <p>This tool scans your entire Glue Up history (all events and attendees). It identifies highly inactive contacts who have <strong>only registered for exactly one event</strong>, and that single event was <strong>more than 6 months ago</strong>. These contacts are safe to purge to free up your CRM quota.</p>
+        <button class="btn" onclick="fetchInactiveContacts()">Scan for Inactive Contacts</button>
         
         <div style="margin-top: 20px;">
-            <h3>Response:</h3>
-            <pre id="output">Waiting for action...</pre>
+            <h3>Results:</h3>
+            <div id="output" style="background: #fff; padding: 10px; border: 1px solid #ddd; border-radius: 4px; overflow-x: auto; min-height: 50px;">Waiting for action...</div>
         </div>
     </div>
 
     <script>
         async function fetchInactiveContacts() {
             const output = document.getElementById('output');
-            output.textContent = 'Fetching inactive contacts (this may take a while)...';
+            output.innerHTML = '<em>Fetching inactive contacts across all historical events (this may take a minute)...</em>';
             output.className = '';
             
             try {
@@ -37,7 +37,38 @@
                 const data = await response.json();
                 
                 if (response.ok) {
-                    output.textContent = JSON.stringify(data, null, 2);
+                    const contacts = data.data;
+                    if (contacts.length === 0) {
+                        output.innerHTML = '<strong>No inactive contacts found!</strong>';
+                        return;
+                    }
+                    
+                    let tableHTML = `
+                        <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
+                            <thead>
+                                <tr style="background-color: #007bff; color: white;">
+                                    <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">Name</th>
+                                    <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">Email</th>
+                                    <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">Only Event Attended</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                    `;
+                    
+                    contacts.forEach(contact => {
+                        tableHTML += `
+                            <tr>
+                                <td style="padding: 10px; border: 1px solid #ddd;">${contact.name}</td>
+                                <td style="padding: 10px; border: 1px solid #ddd;">${contact.email}</td>
+                                <td style="padding: 10px; border: 1px solid #ddd;">${contact.event_date}</td>
+                            </tr>
+                        `;
+                    });
+                    
+                    tableHTML += `</tbody></table>`;
+                    
+                    output.innerHTML = `<p><strong>Found ${contacts.length} inactive contacts</strong> (1 registration ever, > 6 months ago):</p>` + tableHTML;
+                    
                 } else {
                     output.textContent = 'Error: ' + data.message;
                     output.className = 'error';
