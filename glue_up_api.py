@@ -14,53 +14,47 @@ class GlueUpAPI:
         if not self.public_key or not self.private_key:
             raise ValueError("GLUE_UP_PUBLIC_KEY or GLUE_UP_PRIVATE_KEY is not set in environment.")
 
-    def _generate_token(self):
+    def get_headers(self, method="GET", endpoint="/user"):
         """
-        Generates an authentication token using the private key.
-        This assumes a standard JWT (JSON Web Token) RS256 signature for API v2.
+        Generates the digest authentication header 'a' for Glue Up v2 API.
+        Format: a: v=1.0;k={YOUR_PUBLIC_KEY};ts={TIMESTAMP};d={DIGEST}
         """
-        try:
-            # Note: The exact payload claims ('iss', 'sub', 'aud') may need to 
-            # match Glue Up API v2 specifications. 
-            payload = {
-                "iss": self.public_key,
-                "iat": int(time.time()),
-                "exp": int(time.time()) + 3600 # Token valid for 1 hour
-            }
-            # Handle potential escaped newlines from .env variables
-            formatted_private_key = self.private_key.replace('\\n', '\n')
-            
-            # Ensure it has PEM formatting
-            if "-----BEGIN" not in formatted_private_key:
-                # Break the base64 string into 64-character chunks just in case
-                import textwrap
-                key_body = "\n".join(textwrap.wrap(formatted_private_key.replace(" ", ""), 64))
-                formatted_private_key = f"-----BEGIN PRIVATE KEY-----\n{key_body}\n-----END PRIVATE KEY-----"
-
-            token = jwt.encode(payload, formatted_private_key, algorithm="RS256")
-            return token
-        except Exception as e:
-            print(f"Error generating token: {e}")
-            raise ValueError(f"Failed to generate authentication token: {e}")
-
-    def get_headers(self):
-        token = self._generate_token()
+        import time
+        import hmac
+        import hashlib
+        
+        ts = str(int(time.time() * 1000))
+        version = "1.0"
+        
+        # Based on Glue Up Java reference code:
+        # baseString = requestMethod + publicKey + version + timestamp
+        base_string = f"{method}{self.public_key}{version}{ts}"
+        
+        # The digest is an HMAC-SHA256 hash using the privateKey as the secret
+        signing_key = self.private_key.encode('utf-8')
+        digest = hmac.new(
+            signing_key, 
+            base_string.encode('utf-8'), 
+            hashlib.sha256
+        ).hexdigest()
+        
         return {
-            "Authorization": f"Bearer {token}",
+            "a": f"v={version};k={self.public_key};ts={ts};d={digest}",
             "Content-Type": "application/json"
         }
 
     def fetch_all_contacts(self):
         """Fetches all contacts from Glue Up v2 API."""
         url = f"{self.base_url}/user"
-        response = requests.get(url, headers=self.get_headers())
+        response = requests.get(url, headers=self.get_headers("GET", "/user"))
         response.raise_for_status()
         return response.json().get('data', [])
 
     def fetch_contact_activities(self, contact_id):
         """Fetches activities for a specific contact."""
-        url = f"{self.base_url}/user/{contact_id}/activities"
-        response = requests.get(url, headers=self.get_headers())
+        endpoint = f"/user/{contact_id}/activities"
+        url = f"{self.base_url}{endpoint}"
+        response = requests.get(url, headers=self.get_headers("GET", endpoint))
         response.raise_for_status()
         return response.json().get('data', [])
 
@@ -105,3 +99,71 @@ class GlueUpAPI:
                 flagged_contacts.append(contact)
 
         return flagged_contacts
+
+    def get_contact_crm_profile(self, user_id):
+        """Fetches core profile details and custom CRM fields."""
+        endpoint = f"/user/{user_id}"
+        url = f"{self.base_url}{endpoint}"
+        response = requests.get(url, headers=self.get_headers("GET", endpoint))
+        if response.status_code == 200:
+            return response.json()
+        print(f"Error fetching CRM data: {response.status_code}")
+        return None
+
+    def get_contact_event_activities(self, user_id):
+        """Fetches event registrations, tickets, and check-in statuses."""
+        endpoint = "/event/registrations"
+        url = f"{self.base_url}{endpoint}"
+        params = {"user_id": user_id}  # Filters data specifically for this user
+        response = requests.get(url, headers=self.get_headers("GET", endpoint), params=params)
+        if response.status_code == 200:
+            return response.json()
+        print(f"Error fetching Event activities: {response.status_code}")
+        return None
+
+    def get_contact_financial_activities(self, user_id):
+        """Fetches payment histories, invoices, and billing activities."""
+        endpoint = "/finance/invoices"
+        url = f"{self.base_url}{endpoint}"
+        params = {"user_id": user_id}
+        response = requests.get(url, headers=self.get_headers("GET", endpoint), params=params)
+        if response.status_code == 200:
+            return response.json()
+        print(f"Error fetching Finance activities: {response.status_code}")
+        return None
+
+    def compile_user_timeline(self, user_id):
+        print(f"--- Compiling Activity Timeline for User: {user_id} ---")
+        
+        # Fetch data across the different collections
+        profile = self.get_contact_crm_profile(user_id)
+        events = self.get_contact_event_activities(user_id)
+        finances = self.get_contact_financial_activities(user_id)
+        
+        # Process or merge timelines here
+        if profile:
+            data = profile.get('data', {})
+            name = data.get('name') or data.get('displayName') or 'Unknown'
+            org = data.get('organization') or 'Unknown Organization'
+            print(f"\n[CRM Profile Summary]: {name} from {org}")
+            
+        if events:
+            records = events.get('data', [])
+            print(f"\n[Event Activities Found]: {len(records)} records.")
+            for ev in records:
+                print(f" - {ev.get('name', 'Event')} ({ev.get('date', 'Unknown date')})")
+            
+        if finances:
+            records = finances.get('data', [])
+            print(f"\n[Financial Activities Found]: {len(records)} records.")
+            for fin in records:
+                print(f" - Invoice {fin.get('id', 'N/A')}: {fin.get('status', 'Unknown status')}")
+
+if __name__ == "__main__":
+    from dotenv import load_dotenv
+    load_dotenv()
+    import sys
+    # For testing directly from command line
+    user_id = sys.argv[1] if len(sys.argv) > 1 else "12345"
+    api = GlueUpAPI()
+    api.compile_user_timeline(user_id)
