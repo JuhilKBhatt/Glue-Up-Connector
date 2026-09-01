@@ -12,6 +12,10 @@ app = Flask(__name__)
 def index():
     return render_template("index.html")
 
+@app.route("/dedupe")
+def dedupe():
+    return render_template("dedupe.html")
+
 @app.route("/api/inactive-contacts")
 def api_get_inactive_contacts():
     try:

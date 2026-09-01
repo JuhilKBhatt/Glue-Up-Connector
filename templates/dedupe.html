@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Glue Up Duplicate Predictor</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; background-color: #f4f4f9; }
+        h1 { color: #333; }
+        .container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .nav { margin-bottom: 20px; }
+        .nav a { margin-right: 15px; text-decoration: none; color: #007bff; font-weight: bold; }
+        .nav a:hover { text-decoration: underline; }
+        
+        /* Drag and drop zone styles */
+        .drop-zone {
+            max-width: 100%;
+            height: 200px;
+            padding: 25px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            font-family: "Quicksand", sans-serif;
+            font-weight: 500;
+            font-size: 20px;
+            cursor: pointer;
+            color: #cccccc;
+            border: 4px dashed #007bff;
+            border-radius: 10px;
+            background-color: #f8f9fa;
+            margin-bottom: 20px;
+            transition: background-color 0.3s;
+        }
+        .drop-zone--over {
+            border-style: solid;
+            background-color: #e9ecef;
+        }
+        .drop-zone__input {
+            display: none;
+        }
+        
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 10px; border: 1px solid #ddd; text-align: left; }
+        th { background-color: #007bff; color: white; }
+        .group-header { background-color: #ffc107 !important; color: #333 !important; font-weight: bold; }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body>
+    <div class="nav">
+        <a href="/">&larr; Back to CRM Cleanup</a>
+    </div>
+
+    <div class="container">
+        <h1>Duplicate Predictor</h1>
+        <p>Since Glue Up uses emails as unique IDs, people often create multiple profiles using different emails. Drop your Glue Up CRM Excel export below, and we will find contacts who have the same name but different emails.</p>
+        
+        <div class="drop-zone" id="dropZone">
+            <span class="drop-zone__prompt">Drop Excel (.xlsx) file here or click to upload</span>
+            <input type="file" name="myFile" class="drop-zone__input" accept=".xlsx, .xls, .csv">
+        </div>
+
+        <div id="status" style="margin-top: 10px; font-weight: bold; color: #28a745;"></div>
+
+        <div id="output"></div>
+    </div>
+
+    <script>
+        const dropZone = document.getElementById("dropZone");
+        const inputElement = dropZone.querySelector(".drop-zone__input");
+
+        dropZone.addEventListener("click", e => {
+            inputElement.click();
+        });
+
+        inputElement.addEventListener("change", e => {
+            if (inputElement.files.length) {
+                handleFile(inputElement.files[0]);
+            }
+        });
+
+        dropZone.addEventListener("dragover", e => {
+            e.preventDefault();
+            dropZone.classList.add("drop-zone--over");
+        });
+
+        ["dragleave", "dragend"].forEach(type => {
+            dropZone.addEventListener(type, e => {
+                dropZone.classList.remove("drop-zone--over");
+            });
+        });
+
+        dropZone.addEventListener("drop", e => {
+            e.preventDefault();
+            if (e.dataTransfer.files.length) {
+                inputElement.files = e.dataTransfer.files;
+                handleFile(e.dataTransfer.files[0]);
+            }
+            dropZone.classList.remove("drop-zone--over");
+        });
+
+        function normalizeString(str) {
+            if (!str) return "";
+            // Remove punctuation and extra whitespace, convert to lowercase
+            return str.toLowerCase().replace(/[^a-z0-9]/g, "");
+        }
+
+        function handleFile(file) {
+            document.getElementById("status").innerText = `Processing ${file.name}...`;
+            const reader = new FileReader();
+
+            reader.onload = function(e) {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, {type: 'array'});
+                
+                // Use the first sheet
+                const firstSheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[firstSheetName];
+                
+                // Convert to array of objects
+                const json = XLSX.utils.sheet_to_json(worksheet, {defval: ""});
+                
+                if (json.length === 0) {
+                    document.getElementById("status").innerText = "Error: File is empty or could not be parsed.";
+                    return;
+                }
+
+                // Try to find the right column names dynamically
+                const keys = Object.keys(json[0]);
+                let firstNameKey = keys.find(k => k.toLowerCase().includes("first"));
+                let lastNameKey = keys.find(k => k.toLowerCase().includes("last"));
+                let emailKey = keys.find(k => k.toLowerCase().includes("email"));
+                
+                // Fallback for simple "Name" column
+                let fullNameKey = keys.find(k => k.toLowerCase() === "name" || k.toLowerCase() === "full name");
+
+                if (!emailKey) {
+                    document.getElementById("status").innerText = "Error: Could not find an Email column in the file.";
+                    return;
+                }
+                
+                if (!firstNameKey && !lastNameKey && !fullNameKey) {
+                    document.getElementById("status").innerText = "Error: Could not find Name columns in the file.";
+                    return;
+                }
+
+                // Group by normalized name
+                const grouped = {};
+                
+                json.forEach(row => {
+                    let fullName = "";
+                    if (firstNameKey && lastNameKey) {
+                        fullName = (row[firstNameKey] || "") + " " + (row[lastNameKey] || "");
+                    } else if (fullNameKey) {
+                        fullName = row[fullNameKey] || "";
+                    }
+                    
+                    const email = (row[emailKey] || "").toLowerCase().trim();
+                    if (!fullName.trim() || !email) return;
+
+                    const normalizedKey = normalizeString(fullName);
+                    
+                    if (!grouped[normalizedKey]) {
+                        grouped[normalizedKey] = {
+                            displayName: fullName.trim(),
+                            records: []
+                        };
+                    }
+                    
+                    // Avoid grouping the exact same email twice if there are duplicate rows in the excel
+                    if (!grouped[normalizedKey].records.some(r => r.email === email)) {
+                        grouped[normalizedKey].records.push({
+                            firstName: firstNameKey ? row[firstNameKey] : "",
+                            lastName: lastNameKey ? row[lastNameKey] : "",
+                            fullName: fullName.trim(),
+                            email: email,
+                            originalRow: row
+                        });
+                    }
+                });
+
+                // Filter out groups with only 1 email
+                const duplicates = Object.values(grouped).filter(group => group.records.length > 1);
+
+                // Sort by largest groups first
+                duplicates.sort((a, b) => b.records.length - a.records.length);
+
+                renderOutput(duplicates);
+            };
+
+            reader.readAsArrayBuffer(file);
+        }
+
+        function renderOutput(duplicates) {
+            const output = document.getElementById("output");
+            
+            if (duplicates.length === 0) {
+                document.getElementById("status").innerText = "Analysis Complete!";
+                output.innerHTML = "<p>No name duplicates with different emails found!</p>";
+                return;
+            }
+
+            let totalDuplicateProfiles = 0;
+            duplicates.forEach(d => totalDuplicateProfiles += (d.records.length - 1));
+
+            document.getElementById("status").innerText = `Analysis Complete! Found ${duplicates.length} people with multiple accounts (potentially ${totalDuplicateProfiles} extra CRM profiles).`;
+
+            let tableHTML = `
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Identified Person</th>
+                            <th>First Name</th>
+                            <th>Last Name</th>
+                            <th>Different Emails Used</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            duplicates.forEach((group, index) => {
+                tableHTML += `
+                    <tr>
+                        <td colspan="4" class="group-header">Suspected Match #${index + 1}: ${group.displayName} (${group.records.length} accounts)</td>
+                    </tr>
+                `;
+
+                group.records.forEach(record => {
+                    tableHTML += `
+                        <tr>
+                            <td></td>
+                            <td>${record.firstName}</td>
+                            <td>${record.lastName}</td>
+                            <td><strong>${record.email}</strong></td>
+                        </tr>
+                    `;
+                });
+            });
+
+            tableHTML += `</tbody></table>`;
+            output.innerHTML = tableHTML;
+        }
+    </script>
+</body>
+</html>

@@ -8,6 +8,9 @@
         body { font-family: Arial, sans-serif; margin: 40px; background-color: #f4f4f9; }
         h1 { color: #333; }
         .container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .nav { margin-bottom: 20px; }
+        .nav a { margin-right: 15px; text-decoration: none; color: #007bff; font-weight: bold; }
+        .nav a:hover { text-decoration: underline; }
         .btn { padding: 10px 15px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-right: 10px; }
         .btn:hover { background: #0056b3; }
         .filter-bar { background: #f8f9fa; padding: 15px; border-radius: 4px; margin: 20px 0; display: flex; gap: 15px; align-items: center; flex-wrap: wrap; }
@@ -23,6 +26,10 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
+    <div class="nav">
+        <a href="/dedupe">Go to Duplicate Predictor &rarr;</a>
+    </div>
+
     <div class="container">
         <h1>Glue Up CRM Cleanup</h1>
         <p>This tool scans your entire Glue Up history (all events and attendees). It identifies highly inactive contacts who have <strong>only registered for exactly one event</strong>. These contacts are safe to purge to free up your CRM quota.</p>
