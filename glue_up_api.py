@@ -1,34 +1,65 @@
 import os
 import requests
+import time
+import jwt
 from datetime import datetime, timedelta, timezone
 
 class GlueUpAPI:
     def __init__(self):
-        self.base_url = os.environ.get("GLUE_UP_API_URL")
-        self.api_key = os.environ.get("GLUE_UP_API_KEY")
-        self.api_secret = os.environ.get("GLUE_UP_API_SECRET")
+        # Updated base URL to v2
+        self.base_url = os.environ.get("GLUE_UP_API_URL", "https://api.glueup.com/v2")
+        self.public_key = os.environ.get("GLUE_UP_PUBLIC_KEY")
+        self.private_key = os.environ.get("GLUE_UP_PRIVATE_KEY")
 
-        if not self.api_key or not self.api_secret:
-            raise ValueError("GLUE_UP_API_KEY or GLUE_UP_API_SECRET is not set in environment.")
+        if not self.public_key or not self.private_key:
+            raise ValueError("GLUE_UP_PUBLIC_KEY or GLUE_UP_PRIVATE_KEY is not set in environment.")
+
+    def _generate_token(self):
+        """
+        Generates an authentication token using the private key.
+        This assumes a standard JWT (JSON Web Token) RS256 signature for API v2.
+        """
+        try:
+            # Note: The exact payload claims ('iss', 'sub', 'aud') may need to 
+            # match Glue Up API v2 specifications. 
+            payload = {
+                "iss": self.public_key,
+                "iat": int(time.time()),
+                "exp": int(time.time()) + 3600 # Token valid for 1 hour
+            }
+            # Handle potential escaped newlines from .env variables
+            formatted_private_key = self.private_key.replace('\\n', '\n')
+            
+            # Ensure it has PEM formatting
+            if "-----BEGIN" not in formatted_private_key:
+                # Break the base64 string into 64-character chunks just in case
+                import textwrap
+                key_body = "\n".join(textwrap.wrap(formatted_private_key.replace(" ", ""), 64))
+                formatted_private_key = f"-----BEGIN PRIVATE KEY-----\n{key_body}\n-----END PRIVATE KEY-----"
+
+            token = jwt.encode(payload, formatted_private_key, algorithm="RS256")
+            return token
+        except Exception as e:
+            print(f"Error generating token: {e}")
+            raise ValueError(f"Failed to generate authentication token: {e}")
 
     def get_headers(self):
+        token = self._generate_token()
         return {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {token}",
             "Content-Type": "application/json"
         }
 
     def fetch_all_contacts(self):
-        """Fetches all contacts from Glue Up."""
-        url = f"{self.base_url}/contacts"
+        """Fetches all contacts from Glue Up v2 API."""
+        url = f"{self.base_url}/user"
         response = requests.get(url, headers=self.get_headers())
         response.raise_for_status()
-        # The exact response structure depends on the API, usually it's under 'data' or 'items'
         return response.json().get('data', [])
 
     def fetch_contact_activities(self, contact_id):
         """Fetches activities for a specific contact."""
-        # Note: adjust the endpoint according to actual Glue Up API docs
-        url = f"{self.base_url}/contacts/{contact_id}/activities"
+        url = f"{self.base_url}/user/{contact_id}/activities"
         response = requests.get(url, headers=self.get_headers())
         response.raise_for_status()
         return response.json().get('data', [])
@@ -56,7 +87,6 @@ class GlueUpAPI:
 
             has_recent_event = False
             for activity in activities:
-                # Adjust 'type' and 'date' fields based on actual API payload structure
                 activity_type = activity.get('type')
                 activity_date_str = activity.get('date')
                 
