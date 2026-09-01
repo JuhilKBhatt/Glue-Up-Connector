@@ -72,6 +72,25 @@ class GlueUpAPI:
         print(f"Error fetching recent events: {response.status_code} - {response.text}")
         return []
 
+    def get_event_attendees(self, event_id):
+        """Fetches the list of attendees for a specific event."""
+        endpoint = f"/event/{event_id}/attendeeList"
+        url = f"{self.base_url}{endpoint}"
+        
+        payload = {
+            "projection": ["id", "givenName", "familyName", "emailAddress"],
+            "limit": 1000,
+            "offset": 0
+        }
+        
+        response = requests.post(url, headers=self.get_headers("POST", endpoint), json=payload)
+        
+        if response.status_code == 200:
+            return response.json().get('value', [])
+            
+        print(f"Error fetching attendees for event {event_id}: {response.status_code} - {response.text}")
+        return []
+
 if __name__ == "__main__":
     load_dotenv()
     api = GlueUpAPI()
@@ -80,13 +99,42 @@ if __name__ == "__main__":
     events = api.get_recent_events(months=6)
     
     if events:
-        print(f"\nFound {len(events)} events:")
+        print(f"Found {len(events)} events. Gathering all attendees...\n")
+        
+        attendee_counts = {}
+        attendee_details = {}
+        
         for ev in events:
-            # Convert epoch time (ms) to readable format if available
-            date_str = ev.get('startDateTime', 'Unknown')
-            if isinstance(date_str, int):
-                date_str = datetime.fromtimestamp(date_str / 1000.0, tz=timezone.utc).strftime('%Y-%m-%d %H:%M')
+            event_id = ev.get('id')
+            attendees = api.get_event_attendees(event_id)
+            
+            for att in attendees:
+                # Extract email
+                email_obj = att.get("emailAddress", {})
+                email = email_obj.get("value", "") if isinstance(email_obj, dict) else email_obj
                 
-            print(f" - [{date_str}] {ev.get('title', 'Untitled')} (ID: {ev.get('id')})")
+                if not email:
+                    continue  # Skip if no email is provided
+                
+                email = email.lower().strip()
+                
+                if email not in attendee_counts:
+                    attendee_counts[email] = 0
+                    first = att.get("givenName", "")
+                    last = att.get("familyName", "")
+                    attendee_details[email] = f"{first} {last}"
+                
+                attendee_counts[email] += 1
+                
+        # Filter for attendees who registered exactly once
+        single_registrants = [email for email, count in attendee_counts.items() if count == 1]
+        
+        print(f"Total Unique Attendees across all events: {len(attendee_counts)}")
+        print(f"Attendees who registered EXACTLY ONCE: {len(single_registrants)}\n")
+        
+        print("List of Single-Registration Attendees:")
+        for email in single_registrants:
+            print(f" - {attendee_details[email]} ({email})")
+            
     else:
         print("No events found.")
