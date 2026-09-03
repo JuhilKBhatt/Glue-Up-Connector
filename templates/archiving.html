@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+
+{% block title %}Archiving - Glue Up Tools{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0">Archiving Tool</h5>
+    </div>
+    <div class="card-body">
+        <p class="text-muted mb-4">Upload a CRM Excel export (.xlsx). We will scan the file and extract all contacts whose email address contains <code>.archive</code>. You can then download these records as a new Excel file.</p>
+        
+        <div class="drop-zone mb-4" id="dropZone">
+            <span><i class="fa-solid fa-file-excel fs-2 d-block mb-2 text-success"></i>Drop Excel (.xlsx) file here or click to upload</span>
+            <input type="file" name="myFile" class="drop-zone__input" accept=".xlsx, .xls, .csv">
+        </div>
+
+        <div id="status" class="fw-bold text-success mb-3"></div>
+
+        <div id="output"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const dropZone = document.getElementById("dropZone");
+    const inputElement = dropZone.querySelector(".drop-zone__input");
+
+    dropZone.addEventListener("click", e => {
+        inputElement.click();
+    });
+
+    inputElement.addEventListener("change", e => {
+        if (inputElement.files.length) {
+            handleFile(inputElement.files[0]);
+        }
+    });
+
+    dropZone.addEventListener("dragover", e => {
+        e.preventDefault();
+        dropZone.classList.add("drop-zone--over");
+    });
+
+    ["dragleave", "dragend"].forEach(type => {
+        dropZone.addEventListener(type, e => {
+            dropZone.classList.remove("drop-zone--over");
+        });
+    });
+
+    dropZone.addEventListener("drop", e => {
+        e.preventDefault();
+        if (e.dataTransfer.files.length) {
+            inputElement.files = e.dataTransfer.files;
+            handleFile(e.dataTransfer.files[0]);
+        }
+        dropZone.classList.remove("drop-zone--over");
+    });
+
+    function handleFile(file) {
+        document.getElementById("status").innerHTML = `<div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div> Processing ${file.name}...`;
+        const reader = new FileReader();
+
+        reader.onload = function(e) {
+            const data = new Uint8Array(e.target.result);
+            const workbook = XLSX.read(data, {type: 'array'});
+            
+            const firstSheetName = workbook.SheetNames[0];
+            const worksheet = workbook.Sheets[firstSheetName];
+            
+            const json = XLSX.utils.sheet_to_json(worksheet, {defval: ""});
+            
+            if (json.length === 0) {
+                document.getElementById("status").innerHTML = '<span class="text-danger"><i class="fa-solid fa-circle-exclamation"></i> Error: File is empty or could not be parsed.</span>';
+                return;
+            }
+
+            const keys = Object.keys(json[0]);
+            let emailKey = keys.find(k => k.toLowerCase().includes("email"));
+
+            if (!emailKey) {
+                document.getElementById("status").innerHTML = '<span class="text-danger"><i class="fa-solid fa-circle-exclamation"></i> Error: Could not find an Email column in the file.</span>';
+                return;
+            }
+
+            const archivedRecords = [];
+            
+            json.forEach(row => {
+                const email = (row[emailKey] || "").toLowerCase().trim();
+                if (email.includes(".archive") || email.includes("-archive")) {
+                    archivedRecords.push(row);
+                }
+            });
+
+            renderOutput(archivedRecords, file.name);
+        };
+
+        reader.readAsArrayBuffer(file);
+    }
+
+    function downloadExcel(data, originalFilename) {
+        const worksheet = XLSX.utils.json_to_sheet(data);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Archived Contacts");
+        
+        const timestamp = new Date().getTime();
+        XLSX.writeFile(workbook, `archived_contacts_${timestamp}.xlsx`);
+    }
+
+    function renderOutput(records, filename) {
+        const output = document.getElementById("output");
+        
+        if (records.length === 0) {
+            document.getElementById("status").innerHTML = '<i class="fa-solid fa-circle-check"></i> Analysis Complete!';
+            output.innerHTML = '<div class="alert alert-info">No emails containing <code>.archive</code> were found in this file.</div>';
+            return;
+        }
+
+        document.getElementById("status").innerHTML = `<i class="fa-solid fa-circle-check"></i> Analysis Complete! Found ${records.length} archived records.`;
+
+        // Create a download button
+        const btnContainer = document.createElement("div");
+        btnContainer.className = "mb-4";
+        const downloadBtn = document.createElement("button");
+        downloadBtn.className = "btn btn-primary";
+        downloadBtn.innerHTML = '<i class="fa-solid fa-download me-2"></i> Download Excel';
+        downloadBtn.onclick = () => downloadExcel(records, filename);
+        btnContainer.appendChild(downloadBtn);
+
+        // Build preview table
+        const keys = Object.keys(records[0]).slice(0, 5); // Preview first 5 columns
+
+        let tableHTML = `
+            <h6 class="text-muted mb-3">Preview of archived contacts:</h6>
+            <div class="table-responsive">
+                <table class="table table-bordered table-striped mb-0 bg-white">
+                    <thead class="table-light">
+                        <tr>
+                            ${keys.map(k => `<th>${k}</th>`).join('')}
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
+
+        // Show max 50 records in preview
+        const previewRecords = records.slice(0, 50);
+        
+        previewRecords.forEach(record => {
+            tableHTML += `<tr>`;
+            keys.forEach(k => {
+                tableHTML += `<td>${record[k]}</td>`;
+            });
+            tableHTML += `</tr>`;
+        });
+
+        if (records.length > 50) {
+            tableHTML += `<tr><td colspan="${keys.length}" class="text-center text-muted fst-italic">... and ${records.length - 50} more records</td></tr>`;
+        }
+
+        tableHTML += `</tbody></table></div>`;
+        
+        output.innerHTML = "";
+        output.appendChild(btnContainer);
+        output.insertAdjacentHTML("beforeend", tableHTML);
+    }
+</script>
+{% endblock %}

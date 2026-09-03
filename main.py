@@ -16,6 +16,10 @@ def index():
 def dedupe():
     return render_template("dedupe.html")
 
+@app.route("/archiving")
+def archiving():
+    return render_template("archiving.html")
+
 @app.route("/api/inactive-contacts")
 def api_get_inactive_contacts():
     try:

@@ -147,12 +147,8 @@
                 <li class="{% if request.path == '/dedupe' %}active{% endif %}">
                     <a href="/dedupe"><i class="fa-solid fa-users-viewfinder"></i> Duplicate Predictor</a>
                 </li>
-                <!-- Future Modules can go here -->
-                <li class="mt-4 px-3">
-                    <small class="text-muted text-uppercase fw-bold">Coming Soon</small>
-                </li>
-                <li>
-                    <a href="#" class="text-secondary"><i class="fa-solid fa-plus"></i> New Module</a>
+                <li class="{% if request.path == '/archiving' %}active{% endif %}">
+                    <a href="/archiving"><i class="fa-solid fa-box-archive"></i> Archiving</a>
                 </li>
             </ul>
         </nav>
