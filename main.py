@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request, Response
 from glue_up_api import GlueUpAPI
 from invoice_processor import invoice_bp
 
@@ -9,6 +9,20 @@ load_dotenv()
 
 app = Flask(__name__)
 app.register_blueprint(invoice_bp)
+
+@app.before_request
+def require_password():
+    # Only protect if SITE_PASSWORD is set in the environment (e.g., on Render)
+    expected_password = os.environ.get('SITE_PASSWORD')
+    if expected_password:
+        auth = request.authorization
+        # Standard HTTP Basic Auth check
+        if not auth or auth.password != expected_password:
+            return Response(
+                'Access Denied. Please enter the correct password to view this site.', 
+                401,
+                {'WWW-Authenticate': 'Basic realm="Login Required"'}
+            )
 
 @app.route("/")
 def index():
