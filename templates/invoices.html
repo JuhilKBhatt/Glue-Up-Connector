@@ -230,5 +230,10 @@
         
         document.getElementById('output').innerHTML = headerHtml + html;
     }
+
+    // Automatically fetch invoices when the page loads
+    document.addEventListener('DOMContentLoaded', () => {
+        fetchInvoices();
+    });
 </script>
 {% endblock %}

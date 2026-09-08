@@ -190,5 +190,10 @@
         
         output.innerHTML = `<p class="fw-bold mb-3">Showing ${filtered.length} contacts matching your criteria:</p>` + tableHTML;
     }
+
+    // Automatically scan for inactive contacts when the page loads
+    document.addEventListener('DOMContentLoaded', () => {
+        fetchInactiveContacts();
+    });
 </script>
 {% endblock %}
