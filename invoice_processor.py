@@ -1,6 +1,6 @@
 import json
 from datetime import datetime
-from flask import Blueprint, jsonify, render_template
+from flask import Blueprint, jsonify, render_template, request
 from glue_up_api import GlueUpAPI
 
 invoice_bp = Blueprint('invoice_bp', __name__)
@@ -11,36 +11,32 @@ def fetch_invoices():
         api = GlueUpAPI()
         raw_invoices = api.get_all_invoices()
         
-        # Get today's date string for comparison
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        # Get requested date from query params, default to today
+        target_date = request.args.get('date', datetime.now().strftime("%Y-%m-%d"))
         
         processed_invoices = []
         for payload in raw_invoices:
-            # 1. Filter for "today's" invoices
+            # 1. Filter for the target date's invoices
             # Date field might be createdDate, issueDate, date, etc.
             invoice_date = payload.get('createdDate') or payload.get('issueDate') or payload.get('date')
             
-            is_today = False
+            is_target_date = False
             if invoice_date:
                 try:
                     if isinstance(invoice_date, (int, float)):
                         # Assume Unix timestamp in ms (standard for Glue Up)
                         dt = datetime.fromtimestamp(invoice_date / 1000.0)
-                        is_today = dt.strftime("%Y-%m-%d") == today_str
+                        is_target_date = dt.strftime("%Y-%m-%d") == target_date
                     else:
                         # Assume string like "2026-09-08T..."
-                        is_today = str(invoice_date).startswith(today_str)
+                        is_target_date = str(invoice_date).startswith(target_date)
                 except Exception:
                     pass
                     
-            # Skip if it's not from today
-            if not is_today:
+            # Skip if it's not from the target date (unless target_date is 'all')
+            if target_date != 'all' and not is_target_date:
                 continue
                 
-            # Skip voided invoices
-            if payload.get('voided', False):
-                continue
-
             # We try to extract common fields
             invoice_id = payload.get('id') or payload.get('invoiceId') or payload.get('orderId') or payload.get('uuid') or 'Unknown'
             
@@ -50,6 +46,23 @@ def fetch_invoices():
                 if detailed_payload:
                     payload = detailed_payload
                     
+            # Calculate Status
+            is_voided = payload.get('voided', False)
+            balance_due = float(payload.get('balanceDue') or 0)
+            due_date = payload.get('dueDate')
+            
+            # Use current time to check overdue
+            now_ms = datetime.now().timestamp() * 1000
+            
+            if is_voided:
+                invoice_status = 'Void'
+            elif balance_due <= 0:
+                invoice_status = 'Paid'
+            elif due_date and float(due_date) < now_ms:
+                invoice_status = 'Overdue'
+            else:
+                invoice_status = 'Unpaid'
+                    
             line_items = payload.get('items') or payload.get('lineItems') or payload.get('line_items') or []
             
             # Formatted payload with a flat list of line items
@@ -57,6 +70,7 @@ def fetch_invoices():
                 "invoice_id": invoice_id,
                 "date": str(invoice_date),
                 "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "status": invoice_status,
                 "items": []
             }
             

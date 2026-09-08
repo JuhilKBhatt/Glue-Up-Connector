@@ -16,17 +16,40 @@
         <p>This page fetches new and past invoices from the Glue Up API. The line items are automatically parsed and separated by their respective accounts.</p>
         
         <div class="row mb-4" id="filterBar" style="display: none;">
-            <div class="col-md-6">
-                <label class="form-label">Filter by Type</label>
-                <select class="form-select" id="filterType" onchange="applyFilters()">
-                    <option value="all">All Invoices</option>
-                    <option value="Membership Application">Contains Membership Application</option>
-                    <option value="Additional Member">Contains Additional Member</option>
+            <div class="col-md-2 mb-2">
+                <label class="form-label text-muted small fw-bold text-uppercase">Date</label>
+                <!-- Changing date forces a backend fetch -->
+                <input type="date" class="form-control form-control-sm" id="fetchDate" onchange="fetchInvoices()">
+            </div>
+            <div class="col-md-2 mb-2">
+                <label class="form-label text-muted small fw-bold text-uppercase">Status</label>
+                <select class="form-select form-select-sm" id="filterStatus" onchange="applyFilters()">
+                    <option value="all">All</option>
+                    <option value="Unpaid">Unpaid</option>
+                    <option value="Paid">Paid</option>
+                    <option value="Overdue">Overdue</option>
+                    <option value="Void">Void</option>
                 </select>
             </div>
-            <div class="col-md-6">
-                <label class="form-label">Search</label>
-                <input type="text" class="form-control" id="filterSearch" placeholder="Invoice ID, Description, or Account..." onkeyup="applyFilters()">
+            <div class="col-md-2 mb-2">
+                <label class="form-label text-muted small fw-bold text-uppercase">Item Type</label>
+                <select class="form-select form-select-sm" id="filterType" onchange="applyFilters()">
+                    <option value="all">All Items</option>
+                    <option value="Membership Application">Membership App</option>
+                    <option value="Additional Member">Additional Member</option>
+                </select>
+            </div>
+            <div class="col-md-3 mb-2">
+                <label class="form-label text-muted small fw-bold text-uppercase">Amount Range (AUD)</label>
+                <div class="input-group input-group-sm">
+                    <input type="number" class="form-control" id="filterMin" placeholder="Min" onkeyup="applyFilters()" onchange="applyFilters()">
+                    <span class="input-group-text">-</span>
+                    <input type="number" class="form-control" id="filterMax" placeholder="Max" onkeyup="applyFilters()" onchange="applyFilters()">
+                </div>
+            </div>
+            <div class="col-md-3 mb-2">
+                <label class="form-label text-muted small fw-bold text-uppercase">Search</label>
+                <input type="text" class="form-control form-control-sm" id="filterSearch" placeholder="ID or details..." onkeyup="applyFilters()">
             </div>
         </div>
         
@@ -43,11 +66,28 @@
 
     async function fetchInvoices() {
         const output = document.getElementById('output');
+        const dateInput = document.getElementById('fetchDate');
+        
+        // Default to today if empty
+        if (!dateInput.value) {
+            const today = new Date();
+            const yyyy = today.getFullYear();
+            const mm = String(today.getMonth() + 1).padStart(2, '0');
+            const dd = String(today.getDate()).padStart(2, '0');
+            dateInput.value = `${yyyy}-${mm}-${dd}`;
+        }
+        
+        const targetDate = dateInput.value;
+        
         output.innerHTML = '<div class="text-center"><div class="spinner-border text-primary" role="status"></div><p class="mt-2 text-muted">Fetching invoices from Glue Up...</p></div>';
-        document.getElementById('filterBar').style.display = 'none';
+        
+        // Hide filters initially if we haven't loaded data yet, but keep it if we are just switching dates
+        if (allInvoices.length === 0) {
+            document.getElementById('filterBar').style.display = 'none';
+        }
         
         try {
-            const response = await fetch('/api/invoices/fetch');
+            const response = await fetch(`/api/invoices/fetch?date=${targetDate}`);
             const data = await response.json();
             
             if (response.ok) {
@@ -57,7 +97,8 @@
                     applyFilters();
                 } else {
                     allInvoices = [];
-                    output.innerHTML = '<div class="alert alert-warning">No valid invoices found for today. (Voided invoices are excluded).</div>';
+                    document.getElementById('filterBar').style.display = 'flex';
+                    output.innerHTML = `<div class="alert alert-warning">No valid invoices found for ${targetDate}. (Voided invoices are excluded).</div>`;
                 }
             } else {
                 output.innerHTML = `<div class="alert alert-danger">Error: ${data.message}</div>`;
@@ -123,14 +164,35 @@
     }
 
     function applyFilters() {
+        const statusFilter = document.getElementById('filterStatus').value;
         const typeFilter = document.getElementById('filterType').value;
         const searchFilter = document.getElementById('filterSearch').value.toLowerCase();
         
+        const minAmountVal = document.getElementById('filterMin').value;
+        const maxAmountVal = document.getElementById('filterMax').value;
+        const minAmount = minAmountVal ? parseFloat(minAmountVal) : null;
+        const maxAmount = maxAmountVal ? parseFloat(maxAmountVal) : null;
+        
         const filtered = allInvoices.filter(invoice => {
+            // Check Status filter
+            if (statusFilter !== 'all' && invoice.status !== statusFilter) {
+                return false;
+            }
+            
             // Check Type filter
             if (typeFilter !== 'all') {
                 const hasType = invoice.items.some(item => item.type === typeFilter);
                 if (!hasType) return false;
+            }
+            
+            // Check Amount Range filter
+            if (minAmount !== null || maxAmount !== null) {
+                // Calculate invoice total
+                let total = 0;
+                invoice.items.forEach(item => total += (parseFloat(item.amount) || 0));
+                
+                if (minAmount !== null && total < minAmount) return false;
+                if (maxAmount !== null && total > maxAmount) return false;
             }
             
             // Check Search filter
@@ -194,12 +256,23 @@
                 displayDate = displayDate.substring(0, 10);
             }
             
+            let statusBadge = '';
+            if (invoice.status === 'Paid') {
+                statusBadge = '<span class="badge bg-success ms-2">Paid</span>';
+            } else if (invoice.status === 'Overdue') {
+                statusBadge = '<span class="badge bg-danger ms-2">Overdue</span>';
+            } else if (invoice.status === 'Void') {
+                statusBadge = '<span class="badge bg-secondary ms-2">Void</span>';
+            } else {
+                statusBadge = '<span class="badge bg-warning text-dark ms-2">Unpaid</span>';
+            }
+            
             html += `
             <div class="col-md-6 col-lg-4">
                 <div class="card h-100 shadow-sm border-0 rounded-4 overflow-hidden">
                     <div class="card-header bg-white border-bottom-0 pt-4 pb-2 px-4">
                         <div class="d-flex justify-content-between align-items-center mb-2">
-                            <h6 class="mb-0 text-primary fw-bold"><i class="fa-solid fa-file-invoice-dollar me-2"></i>#${invoice.invoice_id}</h6>
+                            <h6 class="mb-0 text-primary fw-bold"><i class="fa-solid fa-file-invoice-dollar me-2"></i>#${invoice.invoice_id} ${statusBadge}</h6>
                             <span class="badge bg-light text-secondary border"><i class="fa-regular fa-clock me-1"></i>${displayDate}</span>
                         </div>
                         <button class="btn btn-outline-success btn-sm w-100 mt-2" onclick="dummySync(this, '${invoice.invoice_id}')">
@@ -224,7 +297,7 @@
         
         let headerHtml = `
             <div class="d-flex justify-content-between align-items-center mb-4 pb-2 border-bottom">
-                <h6 class="text-muted mb-0">Showing <span class="badge bg-primary rounded-pill">${invoices.length}</span> of ${totalCount} valid invoices from today</h6>
+                <h6 class="text-muted mb-0">Showing <span class="badge bg-primary rounded-pill">${invoices.length}</span> of ${totalCount} valid invoices</h6>
             </div>
         `;
         
