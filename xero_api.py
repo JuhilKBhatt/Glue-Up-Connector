@@ -5,7 +5,6 @@ from xero_python.api_client import ApiClient, serialize
 from xero_python.api_client.configuration import Configuration
 from xero_python.api_client.oauth2 import OAuth2Token
 from xero_python.identity import IdentityApi
-from xero_python.utils import get_value
 
 xero_bp = Blueprint('xero_bp', __name__)
 
@@ -16,10 +15,6 @@ CLIENT_SECRET = os.environ.get("XERO_CLIENT_SECRET")
 # Example: http://localhost:5001/xero/callback for local dev
 REDIRECT_URI = os.environ.get("XERO_REDIRECT_URI", "http://localhost:5001/xero/callback")
 
-xero_config = Configuration(
-    debug=os.environ.get("DEBUG", "false").lower() == "true",
-    oauth2_token=OAuth2Token.client_credentials(CLIENT_ID, CLIENT_SECRET),
-)
 api_client = ApiClient(
     Configuration(
         oauth2_token=None
