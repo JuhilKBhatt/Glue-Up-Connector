@@ -137,6 +137,41 @@ class GlueUpAPI:
                 
         return inactive_contacts
 
+    def get_all_invoices(self):
+        """Fetches all invoices (or orders) in the organization's history."""
+        # Try the most likely endpoints for invoices
+        endpoints = ["/finance/invoice/list", "/invoice/list", "/finance/order/list", "/order/list"]
+        
+        payload = {
+            "limit": 1000,
+            "offset": 0,
+            "order": {"createdDate": "desc"} # Assuming standard sorting
+        }
+        
+        for endpoint in endpoints:
+            url = f"{self.base_url}{endpoint}"
+            # Some list endpoints in Glue Up might be POST with payload, or GET. The event list is POST.
+            response = requests.post(url, headers=self.get_headers("POST", endpoint), json=payload)
+            
+            if response.status_code == 200:
+                return response.json().get('value', [])
+                
+        print(f"Error fetching invoices. Last response: {response.status_code} - {response.text}")
+        return []
+
+    def get_invoice_details(self, invoice_id):
+        """Fetches the details of a specific invoice to retrieve its line items."""
+        endpoint = f"/finance/invoice/{invoice_id}"
+        url = f"{self.base_url}{endpoint}"
+        
+        response = requests.get(url, headers=self.get_headers("GET", endpoint))
+        
+        if response.status_code == 200:
+            return response.json().get('value', {})
+            
+        print(f"Error fetching invoice {invoice_id}: {response.status_code} - {response.text}")
+        return {}
+
 if __name__ == "__main__":
     load_dotenv()
     api = GlueUpAPI()

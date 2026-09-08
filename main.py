@@ -2,11 +2,13 @@ import os
 from dotenv import load_dotenv
 from flask import Flask, render_template, jsonify
 from glue_up_api import GlueUpAPI
+from invoice_processor import invoice_bp
 
 # Load environment variables from .env file for local development
 load_dotenv()
 
 app = Flask(__name__)
+app.register_blueprint(invoice_bp)
 
 @app.route("/")
 def index():
