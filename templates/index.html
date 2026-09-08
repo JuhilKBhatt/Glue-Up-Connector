@@ -12,7 +12,7 @@
         <button class="btn btn-primary mb-4" onclick="fetchInactiveContacts()">Scan for Inactive Contacts</button>
         
         <div class="row mb-4" id="filterBar" style="display: none;">
-            <div class="col-md-3">
+            <div class="col-md-4">
                 <label class="form-label">Inactivity Period</label>
                 <select class="form-select" id="filterMonths" onchange="applyFilters()">
                     <option value="6">More than 6 months ago</option>
@@ -20,7 +20,7 @@
                     <option value="0">All time (Any date)</option>
                 </select>
             </div>
-            <div class="col-md-3">
+            <div class="col-md-4">
                 <label class="form-label">Event Type</label>
                 <select class="form-select" id="filterEventType" onchange="applyFilters()">
                     <option value="all">All Events</option>
@@ -28,15 +28,7 @@
                     <option value="private">Private Events</option>
                 </select>
             </div>
-            <div class="col-md-3">
-                <label class="form-label">CRM Status</label>
-                <select class="form-select" id="filterCrm" onchange="applyFilters()">
-                    <option value="all">All (Deleted & Active)</option>
-                    <option value="active">Active CRM ID Only</option>
-                    <option value="deleted">Deleted (No ID) Only</option>
-                </select>
-            </div>
-            <div class="col-md-3">
+            <div class="col-md-4">
                 <label class="form-label">Search</label>
                 <input type="text" class="form-control" id="filterSearch" placeholder="Name, Email, or Event..." onkeyup="applyFilters()">
             </div>
@@ -126,7 +118,6 @@
         const months = parseInt(document.getElementById('filterMonths').value);
         const eventType = document.getElementById('filterEventType').value;
         const search = document.getElementById('filterSearch').value.toLowerCase();
-        const crmStatus = document.getElementById('filterCrm').value;
 
         const cutoffMs = months === 0 ? Date.now() : Date.now() - (months * 30.44 * 24 * 60 * 60 * 1000);
 
@@ -134,10 +125,6 @@
             if (contact.event_time_ms >= cutoffMs) return false;
             if (eventType === 'public' && !contact.is_public) return false;
             if (eventType === 'private' && contact.is_public) return false;
-            
-            const hasId = contact.contact_id !== "N/A" && contact.contact_id;
-            if (crmStatus === 'active' && !hasId) return false;
-            if (crmStatus === 'deleted' && hasId) return false;
 
             if (search) {
                 const searchStr = `${contact.name} ${contact.email} ${contact.event_title}`.toLowerCase();
@@ -165,14 +152,12 @@
                             <th>Email</th>
                             <th>Event Attended</th>
                             <th>Event Date</th>
-                            <th>CRM Contact ID</th>
                         </tr>
                     </thead>
                     <tbody>
         `;
         
         filtered.forEach(contact => {
-            let contactIdDisplay = contact.contact_id === "N/A" || !contact.contact_id ? '<span class="text-muted fst-italic">None / Deleted</span>' : contact.contact_id;
             let eventBadge = contact.is_public ? '<span class="badge bg-success ms-2">Public</span>' : '<span class="badge bg-danger ms-2">Private</span>';
             
             tableHTML += `
@@ -181,7 +166,6 @@
                     <td class="align-middle">${contact.email}</td>
                     <td class="align-middle">${contact.event_title} ${eventBadge}</td>
                     <td class="align-middle">${contact.event_date}</td>
-                    <td class="align-middle">${contactIdDisplay}</td>
                 </tr>
             `;
         });
