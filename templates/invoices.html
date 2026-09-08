@@ -67,35 +67,59 @@
         }
     }
 
-    function dummySync(btn, invoiceId) {
+    async function dummySync(btn, invoiceId) {
         const originalHtml = btn.innerHTML;
         
         // Disable button and show spinner
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Syncing...';
         
-        // Simulate network request
+        // Find the invoice data
+        const invoiceData = allInvoices.find(inv => inv.invoice_id == invoiceId);
+        
+        try {
+            const response = await fetch('/api/xero/sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ invoice: invoiceData })
+            });
+            const data = await response.json();
+            
+            if (response.status === 401 && data.auth_required) {
+                // Redirect to Xero login if not authenticated
+                window.location.href = data.login_url;
+                return;
+            }
+            
+            if (response.ok) {
+                btn.innerHTML = '<i class="fa-solid fa-check"></i> Synced';
+                btn.classList.remove('btn-outline-success');
+                btn.classList.add('btn-success');
+                
+                // Show alert in output
+                const output = document.getElementById('output');
+                const alertHtml = `<div class="alert alert-success alert-dismissible fade show" role="alert">
+                    <strong><i class="fa-solid fa-cloud-arrow-up"></i> Sync Complete!</strong> Successfully synced Invoice #${invoiceId} to Xero.
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>`;
+                output.insertAdjacentHTML('afterbegin', alertHtml);
+            } else {
+                alert("Failed to sync: " + data.message);
+                btn.innerHTML = originalHtml;
+            }
+        } catch (error) {
+            alert("Network error: " + error.message);
+            btn.innerHTML = originalHtml;
+        }
+        
         setTimeout(() => {
-            btn.innerHTML = '<i class="fa-solid fa-check"></i> Synced';
-            btn.classList.remove('btn-outline-success');
-            btn.classList.add('btn-success');
-            
-            // Show alert in output
-            const output = document.getElementById('output');
-            const alertHtml = `<div class="alert alert-success alert-dismissible fade show" role="alert">
-                <strong><i class="fa-solid fa-cloud-arrow-up"></i> This is a Mock Up Xero not connected </strong> Successfully synced Invoice #${invoiceId} to Xero.
-                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-            </div>`;
-            output.insertAdjacentHTML('afterbegin', alertHtml);
-            
-            // Reset button after 3 seconds
-            setTimeout(() => {
+            if (btn.classList.contains('btn-success')) {
                 btn.disabled = false;
                 btn.innerHTML = originalHtml;
                 btn.classList.remove('btn-success');
                 btn.classList.add('btn-outline-success');
-            }, 3000);
-        }, 1500);
+            }
+        }, 3000);
     }
 
     function applyFilters() {

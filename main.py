@@ -1,14 +1,19 @@
 import os
 from dotenv import load_dotenv
-from flask import Flask, render_template, jsonify, request, Response
+from flask import Flask, render_template, jsonify, request, Response, session
 from glue_up_api import GlueUpAPI
 from invoice_processor import invoice_bp
+from xero_api import xero_bp
 
 # Load environment variables from .env file for local development
 load_dotenv()
 
 app = Flask(__name__)
+# Secret key required for Flask sessions (used by Xero OAuth)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "super-secret-default-key-for-dev")
+
 app.register_blueprint(invoice_bp)
+app.register_blueprint(xero_bp)
 
 @app.before_request
 def require_password():
