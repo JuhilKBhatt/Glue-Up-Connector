@@ -6,9 +6,11 @@
 <div class="card">
     <div class="card-header d-flex justify-content-between align-items-center">
         <h5 class="mb-0">Invoices</h5>
-        <button class="btn btn-primary btn-sm" onclick="fetchInvoices()">
-            <i class="fa-solid fa-sync"></i> Fetch Invoices from API
-        </button>
+        <div>
+            <button class="btn btn-primary btn-sm" onclick="fetchInvoices()">
+                <i class="fa-solid fa-sync"></i> Fetch Invoices from API
+            </button>
+        </div>
     </div>
     <div class="card-body">
         <p>This page fetches new and past invoices from the Glue Up API. The line items are automatically parsed and separated by their respective accounts.</p>
@@ -63,6 +65,37 @@
         } catch (error) {
             output.innerHTML = `<div class="alert alert-danger">Network Error: ${error.message}</div>`;
         }
+    }
+
+    function dummySync(btn, invoiceId) {
+        const originalHtml = btn.innerHTML;
+        
+        // Disable button and show spinner
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Syncing...';
+        
+        // Simulate network request
+        setTimeout(() => {
+            btn.innerHTML = '<i class="fa-solid fa-check"></i> Synced';
+            btn.classList.remove('btn-outline-success');
+            btn.classList.add('btn-success');
+            
+            // Show alert in output
+            const output = document.getElementById('output');
+            const alertHtml = `<div class="alert alert-success alert-dismissible fade show" role="alert">
+                <strong><i class="fa-solid fa-cloud-arrow-up"></i> This is a Mock Up Xero not connected </strong> Successfully synced Invoice #${invoiceId} to Xero.
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>`;
+            output.insertAdjacentHTML('afterbegin', alertHtml);
+            
+            // Reset button after 3 seconds
+            setTimeout(() => {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+                btn.classList.remove('btn-success');
+                btn.classList.add('btn-outline-success');
+            }, 3000);
+        }, 1500);
     }
 
     function applyFilters() {
@@ -141,10 +174,13 @@
             <div class="col-md-6 col-lg-4">
                 <div class="card h-100 shadow-sm border-0 rounded-4 overflow-hidden">
                     <div class="card-header bg-white border-bottom-0 pt-4 pb-2 px-4">
-                        <div class="d-flex justify-content-between align-items-center">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
                             <h6 class="mb-0 text-primary fw-bold"><i class="fa-solid fa-file-invoice-dollar me-2"></i>#${invoice.invoice_id}</h6>
                             <span class="badge bg-light text-secondary border"><i class="fa-regular fa-clock me-1"></i>${displayDate}</span>
                         </div>
+                        <button class="btn btn-outline-success btn-sm w-100 mt-2" onclick="dummySync(this, '${invoice.invoice_id}')">
+                            <i class="fa-solid fa-cloud-arrow-up"></i> Sync to Xero
+                        </button>
                     </div>
                     <div class="card-body px-4 pt-2 pb-4">
                         <div class="bg-light bg-opacity-50 p-3 rounded-3 border">
