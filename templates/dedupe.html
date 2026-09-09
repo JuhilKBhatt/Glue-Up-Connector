@@ -3,21 +3,27 @@
 {% block title %}Duplicate Predictor - Glue Up Tools{% endblock %}
 
 {% block content %}
-<div class="card">
-    <div class="card-header d-flex justify-content-between align-items-center">
-        <h5 class="mb-0">Duplicate Predictor</h5>
+<div class="card shadow-sm border-0 rounded-4 overflow-hidden mb-4">
+    <div class="card-header bg-white border-bottom pt-4 pb-3 px-4 d-flex align-items-center justify-content-between">
+        <h4 class="mb-0 fw-bold text-primary"><i class="fa-solid fa-users-viewfinder me-2"></i>Duplicate Predictor</h4>
     </div>
-    <div class="card-body">
-        <p class="text-muted mb-4">Since Glue Up uses emails as unique IDs, people often create multiple profiles using different emails. Drop your Glue Up CRM Excel export below, and we will find contacts who have the same name but different emails.</p>
+    <div class="card-body p-4">
+        <p class="text-secondary fs-5 mb-4">Since Glue Up uses emails as unique IDs, people often create multiple profiles using different emails. Drop your Glue Up CRM Excel export below, and we will find contacts who have the same name but different emails.</p>
         
-        <div class="drop-zone mb-4" id="dropZone">
-            <span><i class="fa-solid fa-cloud-arrow-up fs-2 d-block mb-2"></i>Drop Excel (.xlsx) file here or click to upload</span>
-            <input type="file" name="myFile" class="drop-zone__input" accept=".xlsx, .xls, .csv">
+        <div class="drop-zone card border-2 border-primary border-opacity-50 bg-light bg-opacity-50 rounded-4 p-5 text-center mb-4 text-muted" id="dropZone" style="border-style: dashed !important; cursor: pointer; transition: all 0.2s;">
+            <div class="pointer-events-none">
+                <i class="fa-solid fa-cloud-arrow-up text-primary opacity-75 d-block mb-3" style="font-size: 3.5rem;"></i>
+                <h5 class="fw-bold text-dark mb-1">Click or drag Excel (.xlsx) file here</h5>
+                <p class="mb-0 small">Securely processed entirely in your browser. No data is sent to a server.</p>
+            </div>
+            <input type="file" name="myFile" class="drop-zone__input d-none" accept=".xlsx, .xls, .csv">
         </div>
 
-        <div id="status" class="fw-bold text-success mb-3"></div>
+        <div id="status" class="fw-bold text-success mb-4 text-center fs-5"></div>
 
-        <div id="output"></div>
+        <div id="output">
+            <div class="p-4 text-center text-muted fs-5"><i class="fa-solid fa-sleepy"></i> Waiting for file...</div>
+        </div>
     </div>
 </div>
 {% endblock %}
@@ -143,52 +149,61 @@
         const output = document.getElementById("output");
         
         if (duplicates.length === 0) {
-            document.getElementById("status").innerHTML = '<i class="fa-solid fa-circle-check"></i> Analysis Complete!';
-            output.innerHTML = '<div class="alert alert-success">No name duplicates with different emails found!</div>';
+            document.getElementById("status").innerHTML = '';
+            output.innerHTML = `
+                <div class="card border-0 bg-success bg-opacity-10 rounded-4 p-5 text-center text-success-emphasis mt-4">
+                    <i class="fa-solid fa-face-smile fs-1 mb-3"></i>
+                    <h5 class="fw-bold">Analysis Complete!</h5>
+                    <p class="mb-0">No name duplicates with different emails found!</p>
+                </div>
+            `;
             return;
         }
 
         let totalDuplicateProfiles = 0;
         duplicates.forEach(d => totalDuplicateProfiles += (d.records.length - 1));
 
-        document.getElementById("status").innerHTML = `<i class="fa-solid fa-circle-check"></i> Analysis Complete! Found ${duplicates.length} people with multiple accounts (potentially ${totalDuplicateProfiles} extra CRM profiles).`;
+        document.getElementById("status").innerHTML = `<div class="alert alert-warning border-0 shadow-sm rounded-4"><i class="fa-solid fa-triangle-exclamation me-2"></i> Found <strong>${duplicates.length}</strong> people with multiple accounts (potentially ${totalDuplicateProfiles} extra CRM profiles).</div>`;
 
         let tableHTML = `
-            <div class="table-responsive">
-                <table class="table table-bordered mb-0 bg-white">
-                    <thead class="table-light">
-                        <tr>
-                            <th>Identified Person</th>
-                            <th>First Name</th>
-                            <th>Last Name</th>
-                            <th>Different Emails Used</th>
-                        </tr>
-                    </thead>
-                    <tbody>
+            <div class="card shadow-sm border-0 rounded-4 overflow-hidden mt-4">
+                <div class="table-responsive">
+                    <table class="table table-borderless table-hover align-middle mb-0">
+                        <thead class="bg-light text-secondary text-uppercase small fw-bold" style="letter-spacing: 0.5px;">
+                            <tr>
+                                <th class="ps-4 py-3">Identified Person</th>
+                                <th class="py-3">First Name</th>
+                                <th class="py-3">Last Name</th>
+                                <th class="pe-4 py-3 text-end">Different Emails Used</th>
+                            </tr>
+                        </thead>
+                        <tbody class="border-top-0">
         `;
 
         duplicates.forEach((group, index) => {
             tableHTML += `
-                <tr class="table-warning">
-                    <td colspan="4" class="fw-bold text-dark border-bottom-0">
-                        <i class="fa-solid fa-link me-2"></i> Suspected Match #${index + 1}: ${group.displayName} <span class="badge bg-secondary ms-2">${group.records.length} accounts</span>
+                <tr class="bg-warning bg-opacity-10 border-top border-warning border-opacity-25">
+                    <td colspan="4" class="ps-4 py-3 fw-bold text-dark">
+                        <i class="fa-solid fa-link text-warning me-2"></i> Suspected Match #${index + 1}: ${group.displayName} 
+                        <span class="badge bg-warning text-dark border border-warning rounded-pill px-2 ms-2 shadow-sm">${group.records.length} accounts</span>
                     </td>
                 </tr>
             `;
 
-            group.records.forEach(record => {
+            group.records.forEach((record, rIdx) => {
+                let rowClass = rIdx !== group.records.length - 1 ? 'border-bottom border-light' : '';
                 tableHTML += `
-                    <tr>
-                        <td class="border-top-0"></td>
-                        <td>${record.firstName}</td>
-                        <td>${record.lastName}</td>
-                        <td><strong>${record.email}</strong></td>
+                    <tr class="${rowClass}">
+                        <td class="ps-4 py-3"></td>
+                        <td class="py-3 text-muted">${record.firstName}</td>
+                        <td class="py-3 text-muted">${record.lastName}</td>
+                        <td class="pe-4 py-3 text-end fw-bold text-primary font-monospace">${record.email}</td>
                     </tr>
                 `;
             });
         });
 
-        tableHTML += `</tbody></table></div>`;
+        tableHTML += `</tbody></table></div></div>`;
         output.innerHTML = tableHTML;
     }
 </script>

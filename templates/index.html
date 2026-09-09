@@ -3,45 +3,56 @@
 {% block title %}CRM Cleanup - Glue Up Tools{% endblock %}
 
 {% block content %}
-<div class="card">
-    <div class="card-header">
-        <h5 class="mb-0">CRM Cleanup</h5>
+<div class="card shadow-sm border-0 rounded-4 overflow-hidden mb-4">
+    <div class="card-header bg-white border-bottom pt-4 pb-3 px-4 d-flex align-items-center justify-content-between">
+        <h4 class="mb-0 fw-bold text-primary"><i class="fa-solid fa-broom me-2"></i>CRM Cleanup</h4>
     </div>
-    <div class="card-body">
-        <p>This tool scans your entire Glue Up history (all events and attendees). It identifies highly inactive contacts who have <strong>only registered for exactly one event</strong>. These contacts are safe to purge to free up your CRM quota.</p>
-        <button class="btn btn-primary mb-4" onclick="fetchInactiveContacts()">Scan for Inactive Contacts</button>
+    <div class="card-body p-4">
+        <p class="text-secondary fs-5 mb-4">Identify and safely purge deeply inactive contacts who have <strong>only registered for exactly one event</strong> to free up your CRM quota.</p>
         
-        <div class="row mb-4" id="filterBar" style="display: none;">
-            <div class="col-md-4">
-                <label class="form-label">Inactivity Period</label>
-                <select class="form-select" id="filterMonths" onchange="applyFilters()">
-                    <option value="6">More than 6 months ago</option>
-                    <option value="12">More than 12 months ago</option>
-                    <option value="0">All time (Any date)</option>
-                </select>
-            </div>
-            <div class="col-md-4">
-                <label class="form-label">Event Type</label>
-                <select class="form-select" id="filterEventType" onchange="applyFilters()">
-                    <option value="all">All Events</option>
-                    <option value="public">Public Events</option>
-                    <option value="private">Private Events</option>
-                </select>
-            </div>
-            <div class="col-md-4">
-                <label class="form-label">Search</label>
-                <input type="text" class="form-control" id="filterSearch" placeholder="Name, Email, or Event..." onkeyup="applyFilters()">
+        <button id="scanBtn" class="btn btn-primary btn-lg rounded-pill shadow-sm px-4 mb-4" onclick="fetchInactiveContacts()">
+            <i class="fa-solid fa-radar me-2"></i>Scan for Dormant Accounts
+        </button>
+        
+        <div class="bg-light rounded-4 p-4 mb-4" id="filterBar" style="display: none;">
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label text-muted small fw-bold text-uppercase">Inactivity Period</label>
+                    <select class="form-select form-select-lg border-0 shadow-sm" id="filterMonths" onchange="applyFilters()">
+                        <option value="6">More than 6 months ago</option>
+                        <option value="12">More than 12 months ago</option>
+                        <option value="0">All time (Any date)</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label text-muted small fw-bold text-uppercase">Event Type</label>
+                    <select class="form-select form-select-lg border-0 shadow-sm" id="filterEventType" onchange="applyFilters()">
+                        <option value="all">All Events</option>
+                        <option value="public">Public Events</option>
+                        <option value="private">Private Events</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label text-muted small fw-bold text-uppercase">Search</label>
+                    <input type="text" class="form-control form-control-lg border-0 shadow-sm" id="filterSearch" placeholder="Name, Email, or Event..." onkeyup="applyFilters()">
+                </div>
             </div>
         </div>
 
-        <div class="alert alert-secondary" id="csvBar" style="display: none;">
-            <h6 class="alert-heading text-danger fw-bold"><i class="fa-solid fa-triangle-exclamation"></i> API Workaround: Cross-Check with CRM Export</h6>
-            <p class="mb-2 small">Since Glue Up's API doesn't allow searching the CRM, you can export your active Contacts to a CSV or Excel (.xlsx) file from the Glue Up dashboard and upload it here. We will automatically hide anyone who has already been deleted!</p>
-            <input type="file" class="form-control form-control-sm w-50" id="csvFile" accept=".csv, .xlsx, .xls" onchange="handleFileUpload(event)">
-            <small id="csvStatus" class="text-success fw-bold mt-2 d-block"></small>
+        <div class="card border-0 bg-primary bg-opacity-10 rounded-4 mb-4" id="csvBar" style="display: none;">
+            <div class="card-body p-4 d-flex align-items-center justify-content-between">
+                <div>
+                    <h5 class="text-primary fw-bold mb-1"><i class="fa-solid fa-cloud-arrow-up me-2"></i>Add Export .xlsx file for Accurate Results & Export Data</h5>
+                    <p class="text-muted mb-0 small">Upload your native Glue Up CRM export (.xlsx) to inject all rich custom fields into your dormant accounts download!</p>
+                </div>
+                <div>
+                    <input type="file" class="form-control border-primary text-primary shadow-sm" id="csvFile" accept=".csv, .xlsx, .xls" onchange="handleFileUpload(event)">
+                    <small id="csvStatus" class="text-success fw-bold mt-2 d-block text-end"></small>
+                </div>
+            </div>
         </div>
 
-        <div id="output" class="bg-light p-3 border rounded">Waiting for action...</div>
+        <div id="output" class="p-4 text-center text-muted fs-5"><i class="fa-solid fa-sleepy"></i> Waiting for action...</div>
     </div>
 </div>
 {% endblock %}
@@ -50,10 +61,23 @@
 <script>
     let allContacts = []; 
     let activeCrmEmails = null; 
+    let currentFilteredContacts = [];
 
     async function fetchInactiveContacts() {
         const output = document.getElementById('output');
-        output.innerHTML = '<div class="text-center"><div class="spinner-border text-primary" role="status"></div><p class="mt-2 text-muted">Fetching all single-event contacts across historical events (this may take a minute)...</p></div>';
+        const scanBtn = document.getElementById('scanBtn');
+        
+        // Disable button to prevent call loops
+        scanBtn.disabled = true;
+        scanBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Scanning...';
+        
+        output.innerHTML = `
+            <div class="card border-0 bg-light bg-opacity-50 rounded-4 p-5 text-center">
+                <div class="spinner-border text-primary mb-3" style="width: 3rem; height: 3rem;" role="status"></div>
+                <h5 class="fw-bold text-dark">Scanning Glue Up...</h5>
+                <p class="text-muted mb-0">Fetching all single-event contacts across your entire historical event catalog. This may take a minute depending on your CRM size.</p>
+            </div>
+        `;
         document.getElementById('filterBar').style.display = 'none';
         document.getElementById('csvBar').style.display = 'none';
         
@@ -71,14 +95,49 @@
             }
         } catch (error) {
             output.innerHTML = `<div class="alert alert-danger">Network Error: ${error.message}</div>`;
+        } finally {
+            // Re-enable button
+            scanBtn.disabled = false;
+            scanBtn.innerHTML = 'Scan for Inactive Contacts';
         }
     }
 
-    function extractEmailsFromText(text) {
-        const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/gi;
-        const foundEmails = text.match(emailRegex) || [];
-        activeCrmEmails = new Set(foundEmails.map(em => em.toLowerCase()));
-        document.getElementById('csvStatus').innerText = `Successfully loaded ${activeCrmEmails.size} active emails! Applying filter...`;
+    let activeCrmData = null; // Map of email -> full row data
+
+    function processUploadedData(jsonArray) {
+        activeCrmData = new Map();
+        
+        // Find the email column name
+        if (jsonArray.length === 0) {
+            document.getElementById('csvStatus').innerHTML = `<span class="text-danger">File is empty.</span>`;
+            return;
+        }
+        
+        const keys = Object.keys(jsonArray[0]);
+        const emailKey = keys.find(k => k.toLowerCase().includes('email'));
+        
+        if (!emailKey) {
+            // Fallback: try to find any string that looks like an email in any column
+            jsonArray.forEach(row => {
+                let foundEmail = null;
+                for (let k of keys) {
+                    const val = String(row[k] || '');
+                    if (val.includes('@') && val.includes('.')) {
+                        foundEmail = val.trim().toLowerCase();
+                        break;
+                    }
+                }
+                if (foundEmail) activeCrmData.set(foundEmail, row);
+            });
+        } else {
+            jsonArray.forEach(row => {
+                const email = String(row[emailKey] || '').trim().toLowerCase();
+                if (email) activeCrmData.set(email, row);
+            });
+        }
+        
+        activeCrmEmails = new Set(activeCrmData.keys());
+        document.getElementById('csvStatus').innerText = `Successfully loaded ${activeCrmData.size} active contacts with full data! Applying filter...`;
         applyFilters();
     }
 
@@ -90,19 +149,26 @@
         const reader = new FileReader();
         
         reader.onload = function(e) {
-            if (filename.endsWith('.csv')) {
-                extractEmailsFromText(e.target.result);
-            } else {
-                const data = new Uint8Array(e.target.result);
-                const workbook = XLSX.read(data, {type: 'array'});
+            try {
+                let workbook;
+                if (filename.endsWith('.csv')) {
+                    // For CSV, we can read as text then parse
+                    const data = e.target.result;
+                    workbook = XLSX.read(data, {type: 'string'});
+                } else {
+                    const data = new Uint8Array(e.target.result);
+                    workbook = XLSX.read(data, {type: 'array'});
+                }
                 
-                let allText = "";
+                let allRows = [];
                 workbook.SheetNames.forEach(sheetName => {
-                    const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]);
-                    allText += csv + "\n";
+                    const json = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {defval: ""});
+                    allRows = allRows.concat(json);
                 });
                 
-                extractEmailsFromText(allText);
+                processUploadedData(allRows);
+            } catch (error) {
+                document.getElementById('csvStatus').innerHTML = `<span class="text-danger">Error parsing file: ${error.message}</span>`;
             }
         };
         
@@ -111,6 +177,59 @@
         } else {
             reader.readAsArrayBuffer(file);
         }
+    }
+
+    function downloadInactiveContacts() {
+        if (currentFilteredContacts.length === 0) return;
+        
+        // Prepare data for Excel, flattening the raw_data
+        const exportData = currentFilteredContacts.map(c => {
+            const baseData = {
+                "Name": c.name,
+                "Email": c.email,
+                "Event Attended": c.event_title,
+                "Event Date": c.event_date,
+                "Event Visibility": c.is_public ? "Public" : "Private"
+            };
+            
+            // Unpack everything from Glue Up's raw payload (custom fields, answers, company, etc.)
+            if (c.raw_data) {
+                Object.keys(c.raw_data).forEach(key => {
+                    const val = c.raw_data[key];
+                    // Skip nulls or empty arrays
+                    if (val === null || val === undefined) return;
+                    
+                    // If it's a complex object (like customFields or answers), stringify it so it fits in a single Excel cell
+                    if (typeof val === 'object') {
+                        // Special handling for emailAddress object to avoid redundancy
+                        if (key === 'emailAddress') return; 
+                        baseData[`Raw_${key}`] = JSON.stringify(val);
+                    } else {
+                        baseData[`Raw_${key}`] = val;
+                    }
+                });
+            }
+
+            // Merge uploaded CRM export data if available
+            if (activeCrmData && activeCrmData.has(c.email.toLowerCase())) {
+                const crmRow = activeCrmData.get(c.email.toLowerCase());
+                Object.keys(crmRow).forEach(key => {
+                    // Avoid duplicating exact matches or email keys
+                    if (!key.toLowerCase().includes('email') && crmRow[key] !== "") {
+                        baseData[`CRM_${key}`] = crmRow[key];
+                    }
+                });
+            }
+            
+            return baseData;
+        });
+        
+        const worksheet = XLSX.utils.json_to_sheet(exportData);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Dormant Contacts");
+        
+        const timestamp = new Date().toISOString().split('T')[0];
+        XLSX.writeFile(workbook, `dormant_contacts_${timestamp}.xlsx`);
     }
 
     function applyFilters() {
@@ -137,42 +256,69 @@
 
             return true;
         });
+        
+        currentFilteredContacts = filtered;
 
         if (filtered.length === 0) {
-            output.innerHTML = '<div class="alert alert-warning">No contacts match your filters.</div>';
+            output.innerHTML = `
+                <div class="card border-0 bg-warning bg-opacity-10 rounded-4 p-5 text-center text-warning-emphasis">
+                    <i class="fa-solid fa-face-frown fs-1 mb-3"></i>
+                    <h5 class="fw-bold">No contacts match your filters</h5>
+                    <p class="mb-0">Try adjusting your date range, event type, or search query.</p>
+                </div>
+            `;
             return;
         }
 
         let tableHTML = `
-            <div class="table-responsive">
-                <table class="table table-hover table-striped mb-0 bg-white">
-                    <thead class="table-light">
-                        <tr>
-                            <th>Name</th>
-                            <th>Email</th>
-                            <th>Event Attended</th>
-                            <th>Event Date</th>
-                        </tr>
-                    </thead>
-                    <tbody>
+            <div class="card shadow-sm border-0 rounded-4 overflow-hidden">
+                <div class="table-responsive">
+                    <table class="table table-borderless table-hover align-middle mb-0">
+                        <thead class="bg-light text-secondary text-uppercase small fw-bold" style="letter-spacing: 0.5px;">
+                            <tr>
+                                <th class="ps-4 py-3">Name</th>
+                                <th class="py-3">Email</th>
+                                <th class="py-3">Event Attended</th>
+                                <th class="pe-4 py-3 text-end">Event Date</th>
+                            </tr>
+                        </thead>
+                        <tbody class="border-top-0">
         `;
         
-        filtered.forEach(contact => {
-            let eventBadge = contact.is_public ? '<span class="badge bg-success ms-2">Public</span>' : '<span class="badge bg-danger ms-2">Private</span>';
+        filtered.forEach((contact, idx) => {
+            let eventBadge = contact.is_public ? '<span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25 rounded-pill px-2 ms-2">Public</span>' : '<span class="badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25 rounded-pill px-2 ms-2">Private</span>';
+            let rowClass = idx !== filtered.length - 1 ? 'border-bottom border-light' : '';
             
             tableHTML += `
-                <tr>
-                    <td class="align-middle">${contact.name}</td>
-                    <td class="align-middle">${contact.email}</td>
-                    <td class="align-middle">${contact.event_title} ${eventBadge}</td>
-                    <td class="align-middle">${contact.event_date}</td>
+                <tr class="${rowClass}">
+                    <td class="ps-4 py-3 fw-bold text-dark">${contact.name}</td>
+                    <td class="py-3 text-muted">${contact.email}</td>
+                    <td class="py-3">
+                        <div class="d-flex align-items-center">
+                            <span class="text-truncate" style="max-width: 250px;" title="${contact.event_title}">${contact.event_title}</span> 
+                            ${eventBadge}
+                        </div>
+                    </td>
+                    <td class="pe-4 py-3 text-end text-secondary font-monospace">${contact.event_date}</td>
                 </tr>
             `;
         });
         
-        tableHTML += `</tbody></table></div>`;
+        tableHTML += `</tbody></table></div></div>`;
         
-        output.innerHTML = `<p class="fw-bold mb-3">Showing ${filtered.length} contacts matching your criteria:</p>` + tableHTML;
+        const headerHTML = `
+            <div class="d-flex justify-content-between align-items-center mb-4 mt-2 px-2">
+                <div>
+                    <h5 class="fw-bold text-dark mb-0">Results</h5>
+                    <p class="text-muted small mb-0">Showing <span class="badge bg-primary rounded-pill">${filtered.length}</span> dormant contacts matching your criteria</p>
+                </div>
+                <button class="btn btn-success btn-lg rounded-pill shadow-sm px-4" onclick="downloadInactiveContacts()">
+                    <i class="fa-solid fa-file-excel me-2"></i> Export to Excel
+                </button>
+            </div>
+        `;
+        
+        output.innerHTML = headerHTML + tableHTML;
     }
 
     // Automatically scan for inactive contacts when the page loads

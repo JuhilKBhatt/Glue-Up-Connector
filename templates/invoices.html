@@ -3,58 +3,58 @@
 {% block title %}Invoices - Glue Up Tools{% endblock %}
 
 {% block content %}
-<div class="card">
-    <div class="card-header d-flex justify-content-between align-items-center">
-        <h5 class="mb-0">Invoices</h5>
+<div class="card shadow-sm border-0 rounded-4 overflow-hidden mb-4">
+    <div class="card-header bg-white border-bottom pt-4 pb-3 px-4 d-flex align-items-center justify-content-between">
+        <h4 class="mb-0 fw-bold text-primary"><i class="fa-solid fa-file-invoice-dollar me-2"></i>Invoices & Sync</h4>
         <div>
-            <button class="btn btn-primary btn-sm" onclick="fetchInvoices()">
-                <i class="fa-solid fa-sync"></i> Fetch Invoices from API
+            <button id="fetchBtn" class="btn btn-primary rounded-pill shadow-sm px-4" onclick="fetchInvoices()">
+                <i class="fa-solid fa-sync me-2"></i>Fetch API
             </button>
         </div>
     </div>
-    <div class="card-body">
-        <p>This page fetches new and past invoices from the Glue Up API. The line items are automatically parsed and separated by their respective accounts.</p>
+    <div class="card-body p-4">
+        <p class="text-secondary fs-5 mb-4">Fetch new and historical invoices from Glue Up. Our backend automatically parses line items and assigns them to the correct Xero accounting codes before syncing.</p>
         
-        <div class="row mb-4" id="filterBar" style="display: none;">
-            <div class="col-md-2 mb-2">
-                <label class="form-label text-muted small fw-bold text-uppercase">Date</label>
-                <!-- Changing date forces a backend fetch -->
-                <input type="date" class="form-control form-control-sm" id="fetchDate" onchange="fetchInvoices()">
-            </div>
-            <div class="col-md-2 mb-2">
-                <label class="form-label text-muted small fw-bold text-uppercase">Status</label>
-                <select class="form-select form-select-sm" id="filterStatus" onchange="applyFilters()">
-                    <option value="all">All</option>
-                    <option value="Unpaid">Unpaid</option>
-                    <option value="Paid">Paid</option>
-                    <option value="Overdue">Overdue</option>
-                    <option value="Void">Void</option>
-                </select>
-            </div>
-            <div class="col-md-2 mb-2">
-                <label class="form-label text-muted small fw-bold text-uppercase">Item Type</label>
-                <select class="form-select form-select-sm" id="filterType" onchange="applyFilters()">
-                    <option value="all">All Items</option>
-                    <option value="Membership Application">Membership App</option>
-                    <option value="Additional Member">Additional Member</option>
-                </select>
-            </div>
-            <div class="col-md-3 mb-2">
-                <label class="form-label text-muted small fw-bold text-uppercase">Amount Range (AUD)</label>
-                <div class="input-group input-group-sm">
-                    <input type="number" class="form-control" id="filterMin" placeholder="Min" onkeyup="applyFilters()" onchange="applyFilters()">
-                    <span class="input-group-text">-</span>
-                    <input type="number" class="form-control" id="filterMax" placeholder="Max" onkeyup="applyFilters()" onchange="applyFilters()">
+        <div class="bg-light rounded-4 p-4 mb-4" id="filterBar" style="display: none;">
+            <div class="row g-3">
+                <div class="col-md-2">
+                    <label class="form-label text-muted small fw-bold text-uppercase">Fetch Date</label>
+                    <input type="date" class="form-control form-control-lg border-0 shadow-sm" id="fetchDate" onchange="fetchInvoices()">
                 </div>
-            </div>
-            <div class="col-md-3 mb-2">
-                <label class="form-label text-muted small fw-bold text-uppercase">Search</label>
-                <input type="text" class="form-control form-control-sm" id="filterSearch" placeholder="ID or details..." onkeyup="applyFilters()">
+                <div class="col-md-2">
+                    <label class="form-label text-muted small fw-bold text-uppercase">Status</label>
+                    <select class="form-select form-select-lg border-0 shadow-sm" id="filterStatus" onchange="applyFilters()">
+                        <option value="all">All Status</option>
+                        <option value="Unpaid">Unpaid</option>
+                        <option value="Paid">Paid</option>
+                        <option value="Overdue">Overdue</option>
+                        <option value="Void">Void</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label text-muted small fw-bold text-uppercase">Item Type</label>
+                    <select class="form-select form-select-lg border-0 shadow-sm" id="filterType" onchange="applyFilters()">
+                        <option value="all">All Line Items</option>
+                        <option value="Membership Application">Membership App</option>
+                        <option value="Additional Member">Additional Member</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label text-muted small fw-bold text-uppercase">Amount</label>
+                    <div class="input-group input-group-lg shadow-sm rounded">
+                        <input type="number" class="form-control border-0 px-2" id="filterMin" placeholder="Min" onkeyup="applyFilters()" onchange="applyFilters()">
+                        <input type="number" class="form-control border-0 px-2 border-start" id="filterMax" placeholder="Max" onkeyup="applyFilters()" onchange="applyFilters()">
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label text-muted small fw-bold text-uppercase">Search</label>
+                    <input type="text" class="form-control form-control-lg border-0 shadow-sm" id="filterSearch" placeholder="Invoice ID..." onkeyup="applyFilters()">
+                </div>
             </div>
         </div>
         
         <div id="output">
-            <div class="alert alert-info">Click the "Fetch Invoices" button to pull data from Glue Up.</div>
+            <div class="p-4 text-center text-muted fs-5"><i class="fa-solid fa-sleepy"></i> Waiting for action...</div>
         </div>
     </div>
 </div>
@@ -67,6 +67,7 @@
     async function fetchInvoices() {
         const output = document.getElementById('output');
         const dateInput = document.getElementById('fetchDate');
+        const fetchBtn = document.getElementById('fetchBtn');
         
         // Default to today if empty
         if (!dateInput.value) {
@@ -79,7 +80,18 @@
         
         const targetDate = dateInput.value;
         
-        output.innerHTML = '<div class="text-center"><div class="spinner-border text-primary" role="status"></div><p class="mt-2 text-muted">Fetching invoices from Glue Up...</p></div>';
+        if (fetchBtn) {
+            fetchBtn.disabled = true;
+            fetchBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Fetching...';
+        }
+        
+        output.innerHTML = `
+            <div class="card border-0 bg-light bg-opacity-50 rounded-4 p-5 text-center">
+                <div class="spinner-border text-primary mb-3" style="width: 3rem; height: 3rem;" role="status"></div>
+                <h5 class="fw-bold text-dark">Fetching Invoices...</h5>
+                <p class="text-muted mb-0">Querying Glue Up for invoices issued on ${targetDate}.</p>
+            </div>
+        `;
         
         // Hide filters initially if we haven't loaded data yet, but keep it if we are just switching dates
         if (allInvoices.length === 0) {
@@ -98,13 +110,24 @@
                 } else {
                     allInvoices = [];
                     document.getElementById('filterBar').style.display = 'flex';
-                    output.innerHTML = `<div class="alert alert-warning">No valid invoices found for ${targetDate}. (Voided invoices are excluded).</div>`;
+                    output.innerHTML = `
+                        <div class="card border-0 bg-warning bg-opacity-10 rounded-4 p-5 text-center text-warning-emphasis">
+                            <i class="fa-solid fa-face-frown fs-1 mb-3"></i>
+                            <h5 class="fw-bold">No valid invoices found for ${targetDate}</h5>
+                            <p class="mb-0">Voided invoices are excluded.</p>
+                        </div>
+                    `;
                 }
             } else {
-                output.innerHTML = `<div class="alert alert-danger">Error: ${data.message}</div>`;
+                output.innerHTML = `<div class="alert alert-danger shadow-sm rounded-4 border-0">Error: ${data.message}</div>`;
             }
         } catch (error) {
-            output.innerHTML = `<div class="alert alert-danger">Network Error: ${error.message}</div>`;
+            output.innerHTML = `<div class="alert alert-danger shadow-sm rounded-4 border-0">Network Error: ${error.message}</div>`;
+        } finally {
+            if (fetchBtn) {
+                fetchBtn.disabled = false;
+                fetchBtn.innerHTML = '<i class="fa-solid fa-sync me-2"></i>Fetch API';
+            }
         }
     }
 
@@ -214,7 +237,13 @@
 
     function renderInvoices(invoices, totalCount) {
         if (invoices.length === 0) {
-            document.getElementById('output').innerHTML = '<div class="alert alert-warning">No invoices match your filters.</div>';
+            document.getElementById('output').innerHTML = `
+                <div class="card border-0 bg-warning bg-opacity-10 rounded-4 p-5 text-center text-warning-emphasis">
+                    <i class="fa-solid fa-face-frown fs-1 mb-3"></i>
+                    <h5 class="fw-bold">No invoices match your filters</h5>
+                    <p class="mb-0">Try adjusting your status, type, or amount range.</p>
+                </div>
+            `;
             return;
         }
 

@@ -3,21 +3,27 @@
 {% block title %}Archiving - Glue Up Tools{% endblock %}
 
 {% block content %}
-<div class="card">
-    <div class="card-header d-flex justify-content-between align-items-center">
-        <h5 class="mb-0">Archiving Tool</h5>
+<div class="card shadow-sm border-0 rounded-4 overflow-hidden mb-4">
+    <div class="card-header bg-white border-bottom pt-4 pb-3 px-4 d-flex align-items-center justify-content-between">
+        <h4 class="mb-0 fw-bold text-primary"><i class="fa-solid fa-box-archive me-2"></i>Archiving Tool</h4>
     </div>
-    <div class="card-body">
-        <p class="text-muted mb-4">Upload a CRM Excel export (.xlsx). We will scan the file and extract all contacts whose email address contains <code>.archive</code>. You can then download these records as a new Excel file.</p>
+    <div class="card-body p-4">
+        <p class="text-secondary fs-5 mb-4">Upload a CRM Excel export (.xlsx). We will scan the file and extract all contacts whose email address contains <code>.archive</code>. You can then download these records as a new Excel file.</p>
         
-        <div class="drop-zone mb-4" id="dropZone">
-            <span><i class="fa-solid fa-file-excel fs-2 d-block mb-2 text-success"></i>Drop Excel (.xlsx) file here or click to upload</span>
-            <input type="file" name="myFile" class="drop-zone__input" accept=".xlsx, .xls, .csv">
+        <div class="drop-zone card border-2 border-primary border-opacity-50 bg-light bg-opacity-50 rounded-4 p-5 text-center mb-4 text-muted" id="dropZone" style="border-style: dashed !important; cursor: pointer; transition: all 0.2s;">
+            <div class="pointer-events-none">
+                <i class="fa-solid fa-file-excel text-success opacity-75 d-block mb-3" style="font-size: 3.5rem;"></i>
+                <h5 class="fw-bold text-dark mb-1">Click or drag Excel (.xlsx) file here</h5>
+                <p class="mb-0 small">Securely processed entirely in your browser.</p>
+            </div>
+            <input type="file" name="myFile" class="drop-zone__input d-none" accept=".xlsx, .xls, .csv">
         </div>
 
-        <div id="status" class="fw-bold text-success mb-3"></div>
+        <div id="status" class="fw-bold text-success mb-4 text-center fs-5"></div>
 
-        <div id="output"></div>
+        <div id="output">
+            <div class="p-4 text-center text-muted fs-5"><i class="fa-solid fa-sleepy"></i> Waiting for file...</div>
+        </div>
     </div>
 </div>
 {% endblock %}
@@ -111,57 +117,66 @@
         const output = document.getElementById("output");
         
         if (records.length === 0) {
-            document.getElementById("status").innerHTML = '<i class="fa-solid fa-circle-check"></i> Analysis Complete!';
-            output.innerHTML = '<div class="alert alert-info">No emails containing <code>.archive</code> were found in this file.</div>';
+            document.getElementById("status").innerHTML = '';
+            output.innerHTML = `
+                <div class="card border-0 bg-success bg-opacity-10 rounded-4 p-5 text-center text-success-emphasis mt-4">
+                    <i class="fa-solid fa-face-smile fs-1 mb-3"></i>
+                    <h5 class="fw-bold">Analysis Complete!</h5>
+                    <p class="mb-0">No emails containing <code>.archive</code> were found in this file.</p>
+                </div>
+            `;
             return;
         }
 
-        document.getElementById("status").innerHTML = `<i class="fa-solid fa-circle-check"></i> Analysis Complete! Found ${records.length} archived records.`;
-
-        // Create a download button
-        const btnContainer = document.createElement("div");
-        btnContainer.className = "mb-4";
-        const downloadBtn = document.createElement("button");
-        downloadBtn.className = "btn btn-primary";
-        downloadBtn.innerHTML = '<i class="fa-solid fa-download me-2"></i> Download Excel';
-        downloadBtn.onclick = () => downloadExcel(records, filename);
-        btnContainer.appendChild(downloadBtn);
+        document.getElementById("status").innerHTML = `<div class="alert alert-warning border-0 shadow-sm rounded-4"><i class="fa-solid fa-triangle-exclamation me-2"></i> Found <strong>${records.length}</strong> archived records.</div>`;
 
         // Build preview table
         const keys = Object.keys(records[0]).slice(0, 5); // Preview first 5 columns
 
         let tableHTML = `
-            <h6 class="text-muted mb-3">Preview of archived contacts:</h6>
-            <div class="table-responsive">
-                <table class="table table-bordered table-striped mb-0 bg-white">
-                    <thead class="table-light">
-                        <tr>
-                            ${keys.map(k => `<th>${k}</th>`).join('')}
-                        </tr>
-                    </thead>
-                    <tbody>
+            <div class="card shadow-sm border-0 rounded-4 overflow-hidden mt-4">
+                <div class="table-responsive">
+                    <table class="table table-borderless table-hover align-middle mb-0">
+                        <thead class="bg-light text-secondary text-uppercase small fw-bold" style="letter-spacing: 0.5px;">
+                            <tr>
+                                ${keys.map((k, i) => `<th class="py-3 ${i===0 ? 'ps-4' : ''} ${i===keys.length-1 ? 'pe-4' : ''}">${k}</th>`).join('')}
+                            </tr>
+                        </thead>
+                        <tbody class="border-top-0">
         `;
 
         // Show max 50 records in preview
         const previewRecords = records.slice(0, 50);
         
-        previewRecords.forEach(record => {
-            tableHTML += `<tr>`;
-            keys.forEach(k => {
-                tableHTML += `<td>${record[k]}</td>`;
+        previewRecords.forEach((record, idx) => {
+            let rowClass = idx !== previewRecords.length - 1 ? 'border-bottom border-light' : '';
+            tableHTML += `<tr class="${rowClass}">`;
+            keys.forEach((k, i) => {
+                let cellClass = `py-3 text-muted ${i===0 ? 'ps-4 text-dark fw-bold' : ''} ${i===keys.length-1 ? 'pe-4' : ''}`;
+                tableHTML += `<td class="${cellClass}">${record[k]}</td>`;
             });
             tableHTML += `</tr>`;
         });
 
         if (records.length > 50) {
-            tableHTML += `<tr><td colspan="${keys.length}" class="text-center text-muted fst-italic">... and ${records.length - 50} more records</td></tr>`;
+            tableHTML += `<tr><td colspan="${keys.length}" class="text-center text-muted fst-italic py-3 border-top border-light bg-light bg-opacity-50">... and ${records.length - 50} more records</td></tr>`;
         }
 
-        tableHTML += `</tbody></table></div>`;
+        tableHTML += `</tbody></table></div></div>`;
         
-        output.innerHTML = "";
-        output.appendChild(btnContainer);
-        output.insertAdjacentHTML("beforeend", tableHTML);
+        const headerHTML = `
+            <div class="d-flex justify-content-between align-items-center mb-4 mt-2 px-2">
+                <div>
+                    <h5 class="fw-bold text-dark mb-0">Archived Records</h5>
+                    <p class="text-muted small mb-0">Ready to download ${records.length} records</p>
+                </div>
+                <button class="btn btn-success btn-lg rounded-pill shadow-sm px-4" onclick="downloadExcel(records, '${filename}')">
+                    <i class="fa-solid fa-file-excel me-2"></i> Download Excel
+                </button>
+            </div>
+        `;
+        
+        output.innerHTML = headerHTML + tableHTML;
     }
 </script>
 {% endblock %}

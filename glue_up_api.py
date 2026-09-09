@@ -66,7 +66,11 @@ class GlueUpAPI:
         url = f"{self.base_url}{endpoint}"
         
         payload = {
-            "projection": ["id", "givenName", "familyName", "emailAddress", "contactId"],
+            "projection": [
+                "id", "givenName", "familyName", "emailAddress", "contactId", 
+                "company", "title", "jobTitle", "workPhone", "mobilePhone", 
+                "status", "ticket", "answers", "customFields", "registration", "organization"
+            ],
             "limit": 1000,
             "offset": 0
         }
@@ -112,7 +116,8 @@ class GlueUpAPI:
                         "latest_event_time": 0,
                         "contact_id": att.get("contactId", "N/A"),
                         "event_title": "",
-                        "is_public": True
+                        "is_public": True,
+                        "raw_data": {}
                     }
                 
                 attendee_data[email]["count"] += 1
@@ -120,6 +125,7 @@ class GlueUpAPI:
                     attendee_data[email]["latest_event_time"] = event_time
                     attendee_data[email]["event_title"] = event_title
                     attendee_data[email]["is_public"] = is_public
+                    attendee_data[email]["raw_data"] = att
                     
         inactive_contacts = []
         for email, data in attendee_data.items():
@@ -132,7 +138,8 @@ class GlueUpAPI:
                     "event_time_ms": data["latest_event_time"],
                     "event_title": data["event_title"],
                     "is_public": data["is_public"],
-                    "contact_id": data["contact_id"]
+                    "contact_id": data["contact_id"],
+                    "raw_data": data["raw_data"]
                 })
                 
         return inactive_contacts
