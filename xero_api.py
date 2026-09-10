@@ -151,11 +151,18 @@ def sync_invoice():
             else:
                 account_code = "200" # Default fallback (Sales)
                 
+            total_amount = float(item.get('amount', 0))
+            quantity = float(item.get('quantity', 1.0))
+            
+            # Xero multiplies unit_amount by quantity. Since Glue Up provides the total amount,
+            # we must derive the true unit price by dividing the total by the quantity.
+            unit_amount = total_amount / quantity if quantity != 0 else total_amount
+
             line_items.append(
                 LineItem(
                     description=item.get('description', 'Membership Fee'),
-                    unit_amount=float(item.get('amount', 0)),
-                    quantity=1.0,
+                    unit_amount=round(unit_amount, 2),
+                    quantity=quantity,
                     account_code=account_code
                 )
             )
@@ -177,6 +184,18 @@ def sync_invoice():
         # Xero identifies contacts primarily by Name. Prefer company name if B2B.
         contact_display_name = company_name if company_name else (person_name if person_name else "AJBCC Member (Synced via Glue Up)")
 
+        reference_str = f"GlueUp-{invoice_data.get('invoice_id')}"
+        
+        from xero_python.accounting import LineAmountTypes
+        
+        # Map Glue Up Status to Xero Status
+        glue_up_status = invoice_data.get('status', 'Unpaid')
+        
+        if glue_up_status in ['Paid', 'Unpaid', 'Overdue']:
+            xero_status = "AUTHORISED"  # Xero requires invoices to be AUTHORISED before payments can be applied
+        else:
+            xero_status = "DRAFT"
+
         # Build the Xero Invoice
         xero_invoice = Invoice(
             type="ACCREC", 
@@ -184,32 +203,42 @@ def sync_invoice():
             line_items=line_items,
             date=parsed_date,
             due_date=parsed_date, # Default due date
-            reference=f"GlueUp-{invoice_data.get('invoice_id')}",
-            status="DRAFT" # Safe practice: create as DRAFT so you can review in Xero
+            reference=reference_str,
+            line_amount_types=LineAmountTypes.INCLUSIVE, # Ensures Xero doesn't add GST on top of Glue Up totals
+            status=xero_status
         )
         
-        # Push to Xero
-        try:
-            created_invoices = accounting_api.create_invoices(
+        # Helper function to perform the sync with duplicate check
+        def attempt_sync():
+            # 1. Check for duplicates
+            existing = accounting_api.get_invoices(
+                xero_tenant_id=xero_tenant_id,
+                where=f'Reference=="{reference_str}"'
+            )
+            if existing and existing.invoices:
+                return False, "Invoice is already synced to Xero!"
+                
+            # 2. Push to Xero if it doesn't exist
+            accounting_api.create_invoices(
                 xero_tenant_id=xero_tenant_id, 
                 invoices={"invoices": [xero_invoice]}
             )
+            return True, "Invoice successfully pushed to Xero as DRAFT!"
+
+        try:
+            success, msg = attempt_sync()
         except Exception as api_err:
             # If the token expired (401), automatically refresh and retry
             if "401" in str(api_err) or "Unauthorized" in str(api_err):
                 print("Xero token expired, attempting refresh...")
                 api_client.refresh_oauth2_token()
-                # Retry push
-                created_invoices = accounting_api.create_invoices(
-                    xero_tenant_id=xero_tenant_id, 
-                    invoices={"invoices": [xero_invoice]}
-                )
+                success, msg = attempt_sync()
             else:
                 raise api_err
         
         return jsonify({
-            "status": "success",
-            "message": "Invoice successfully pushed to Xero as DRAFT!"
+            "status": "success" if success else "error",
+            "message": msg
         })
         
     except Exception as e:

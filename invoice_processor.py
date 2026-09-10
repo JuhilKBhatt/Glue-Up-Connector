@@ -107,12 +107,13 @@ def fetch_invoices():
                 desc_lower = description.lower()
                 type_lower = item_type.lower()
                 
-                if "additional" in type_lower or "additional" in desc_lower:
+                if "additional" in type_lower or "additional" in desc_lower or "extra" in type_lower or "extra" in desc_lower:
                     badge_type = "Additional Member"
                 elif "application" in type_lower or "application" in desc_lower:
                     badge_type = "Membership Application"
                 
                 amount = item.get('faceValue') or item.get('amount') or item.get('total') or 0
+                quantity = item.get('quantity') or item.get('count') or 1.0
                 
                 # Map to Xero accounts based on the line item type
                 account_name = item.get('account') or item.get('accountCode') or item.get('accountingCode') or 'Uncategorized'
@@ -125,6 +126,7 @@ def fetch_invoices():
                 formatted_payload["items"].append({
                     "description": description,
                     "amount": amount,
+                    "quantity": float(quantity),
                     "type": badge_type,
                     "account": account_name
                 })
