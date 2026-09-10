@@ -65,12 +65,26 @@ def fetch_invoices():
                     
             line_items = payload.get('items') or payload.get('lineItems') or payload.get('line_items') or []
             
+            # Extract Company and Contact info
+            company_obj = payload.get('company', {})
+            company_name = company_obj.get('name') if isinstance(company_obj, dict) else None
+            
+            contacts_list = payload.get('contacts', [])
+            contact_name = None
+            if contacts_list and len(contacts_list) > 0:
+                first_contact = contacts_list[0]
+                given_name = first_contact.get('givenName', '')
+                family_name = first_contact.get('familyName', '')
+                contact_name = f"{given_name} {family_name}".strip()
+            
             # Formatted payload with a flat list of line items
             formatted_payload = {
                 "invoice_id": invoice_id,
                 "date": str(invoice_date),
                 "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "status": invoice_status,
+                "company_name": company_name,
+                "contact_name": contact_name,
                 "items": []
             }
             

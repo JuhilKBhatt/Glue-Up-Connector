@@ -15,11 +15,23 @@ CLIENT_SECRET = os.environ.get("XERO_CLIENT_SECRET")
 # Example: http://localhost:5001/xero/callback for local dev
 REDIRECT_URI = os.environ.get("XERO_REDIRECT_URI", "http://localhost:5001/xero/callback")
 
+# Dummy token saver and getter functions required by xero-python's set_oauth2_token
+def dummy_token_getter():
+    return session.get('xero_token')
+
+def dummy_token_saver(token):
+    session['xero_token'] = token
+
 api_client = ApiClient(
     Configuration(
-        oauth2_token=None
+        oauth2_token=OAuth2Token(
+            client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET
+        )
     ),
     pool_threads=1,
+    oauth2_token_getter=dummy_token_getter,
+    oauth2_token_saver=dummy_token_saver
 )
 
 @xero_bp.route("/xero/login")
@@ -28,8 +40,8 @@ def login():
     if not CLIENT_ID or not CLIENT_SECRET:
         return "XERO_CLIENT_ID and XERO_CLIENT_SECRET not set in environment.", 500
         
-    # We request scopes for offline_access (to get a refresh token), and accounting.transactions
-    scope = "offline_access accounting.transactions accounting.contacts"
+    # We request granular scopes replacing the deprecated accounting.transactions
+    scope = "openid profile email offline_access accounting.invoices accounting.contacts"
     
     # Generate the authorization URL
     auth_url = (
@@ -49,22 +61,42 @@ def oauth_callback():
     if not code:
         return "Error: No code provided by Xero.", 400
 
-    # Exchange the code for an access token
     try:
-        # In the real xero-python SDK, we use the oauth2 mechanism to exchange the code
-        # We manually configure the token exchange since the SDK wrapper is a bit complex
-        token = api_client.get_oauth2_token(
-            CLIENT_ID, 
-            CLIENT_SECRET, 
-            REDIRECT_URI, 
-            code
+        import requests
+        import base64
+        
+        # Manually exchange the code to avoid xero-python OAuth lib headaches
+        auth_string = f"{CLIENT_ID}:{CLIENT_SECRET}"
+        b64_auth = base64.b64encode(auth_string.encode()).decode()
+        
+        token_response = requests.post(
+            "https://identity.xero.com/connect/token",
+            headers={
+                "Authorization": f"Basic {b64_auth}",
+                "Content-Type": "application/x-www-form-urlencoded"
+            },
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": REDIRECT_URI
+            }
         )
+        
+        if not token_response.ok:
+            return f"Error exchanging code: {token_response.text}", 400
+            
+        token = token_response.json()
         
         # Save token to session (in a real app, save to a DB if it's a background worker)
         session['xero_token'] = token
         
         # We also need the tenant ID to make API calls
-        api_client.configuration.oauth2_token = OAuth2Token(**token)
+        api_client.configuration.oauth2_token = OAuth2Token(
+            client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET
+        )
+        api_client.set_oauth2_token(token)
+        
         identity_api = IdentityApi(api_client)
         connections = identity_api.get_connections()
         
@@ -98,17 +130,27 @@ def sync_invoice():
 
     try:
         # Rehydrate the API client with the token from the session
-        api_client.configuration.oauth2_token = OAuth2Token(**xero_token)
+        api_client.configuration.oauth2_token = OAuth2Token(
+            client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET
+        )
+        api_client.set_oauth2_token(xero_token)
+        
         accounting_api = AccountingApi(api_client)
         
         # Build the Xero LineItems
         line_items = []
         for item in invoice_data.get('items', []):
-            # IMPORTANT: Here we use a generic AccountCode "200". 
-            # You must map your specific accounts to Xero AccountCodes (integers like 200, 400).
-            # e.g., if item['type'] == 'Membership Application': account_code = '410'
-            account_code = "200" 
+            item_type = item.get('type', 'Standard')
             
+            # Xero Account Mapping
+            if item_type == 'Membership Application':
+                account_code = "2004"
+            elif item_type == 'Additional Member':
+                account_code = "2005"
+            else:
+                account_code = "200" # Default fallback (Sales)
+                
             line_items.append(
                 LineItem(
                     description=item.get('description', 'Membership Fee'),
@@ -118,23 +160,52 @@ def sync_invoice():
                 )
             )
             
+        # Convert date string to python datetime object for Xero serialization
+        from datetime import datetime
+        raw_date = invoice_data.get('date')
+        try:
+            # Attempt to parse YYYY-MM-DD
+            parsed_date = datetime.strptime(raw_date, "%Y-%m-%d")
+        except (ValueError, TypeError):
+            # Fallback to current date if parsing fails
+            parsed_date = datetime.now()
+
+        # Determine the best Contact Name to use in Xero
+        company_name = invoice_data.get('company_name')
+        person_name = invoice_data.get('contact_name')
+        
+        # Xero identifies contacts primarily by Name. Prefer company name if B2B.
+        contact_display_name = company_name if company_name else (person_name if person_name else "AJBCC Member (Synced via Glue Up)")
+
         # Build the Xero Invoice
-        # Using a dummy contact name since Glue Up payload doesn't easily expose the member's company name in the flattened items yet
         xero_invoice = Invoice(
             type="ACCREC", 
-            contact=Contact(name="AJBCC Member (Synced via Glue Up)"), 
+            contact=Contact(name=contact_display_name), 
             line_items=line_items,
-            date=invoice_data.get('date'),
-            due_date=invoice_data.get('date'), # Default due date
+            date=parsed_date,
+            due_date=parsed_date, # Default due date
             reference=f"GlueUp-{invoice_data.get('invoice_id')}",
             status="DRAFT" # Safe practice: create as DRAFT so you can review in Xero
         )
         
         # Push to Xero
-        created_invoices = accounting_api.create_invoices(
-            xero_tenant_id=xero_tenant_id, 
-            invoices={"invoices": [xero_invoice]}
-        )
+        try:
+            created_invoices = accounting_api.create_invoices(
+                xero_tenant_id=xero_tenant_id, 
+                invoices={"invoices": [xero_invoice]}
+            )
+        except Exception as api_err:
+            # If the token expired (401), automatically refresh and retry
+            if "401" in str(api_err) or "Unauthorized" in str(api_err):
+                print("Xero token expired, attempting refresh...")
+                api_client.refresh_oauth2_token()
+                # Retry push
+                created_invoices = accounting_api.create_invoices(
+                    xero_tenant_id=xero_tenant_id, 
+                    invoices={"invoices": [xero_invoice]}
+                )
+            else:
+                raise api_err
         
         return jsonify({
             "status": "success",

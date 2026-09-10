@@ -52,6 +52,18 @@ def api_get_inactive_contacts():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+@app.route("/api/delete-contact/<contact_id>", methods=["POST"])
+def api_delete_contact(contact_id):
+    try:
+        api = GlueUpAPI()
+        success, message = api.delete_contact(contact_id)
+        if success:
+            return jsonify({"status": "success", "message": message})
+        else:
+            return jsonify({"status": "error", "message": message}), 400
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 if __name__ == "__main__":
     # host='0.0.0.0' is required for Docker port forwarding to work
     app.run(host="0.0.0.0", port=5001, debug=True)

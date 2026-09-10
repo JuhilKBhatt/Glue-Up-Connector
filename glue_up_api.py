@@ -179,6 +179,41 @@ class GlueUpAPI:
         print(f"Error fetching invoice {invoice_id}: {response.status_code} - {response.text}")
         return {}
 
+    def delete_contact(self, contact_id):
+        """
+        Executes a signed custom API script deletion against the User/Contact endpoint.
+        """
+        # The resource endpoint pattern used inside Glue Up's User Collection
+        endpoint = f"/user/contacts/{contact_id}"
+        full_url = f"{self.base_url}{endpoint}"
+        
+        # Generate the request signature specific to this DELETE event
+        headers = self.get_headers("DELETE", endpoint)
+        
+        try:
+            print(f"Sending signed deletion request for Contact ID: {contact_id}...")
+            response = requests.delete(full_url, headers=headers)
+            
+            # Evaluate standard API lifecycle HTTP status codes
+            if response.status_code in [200, 204]:
+                print(f"Success: Contact {contact_id} successfully deleted via custom script.")
+                return True, f"Contact {contact_id} successfully deleted"
+            elif response.status_code == 401:
+                print("Error 401: Unauthorised. Verify your Public/Private keys and digest generation.")
+                return False, "Unauthorised API credentials"
+            elif response.status_code == 404:
+                print(f"Error 404: Contact ID {contact_id} does not exist in your CRM database.")
+                return False, f"Contact {contact_id} not found or endpoint invalid"
+            else:
+                msg = f"Failed with Status Code {response.status_code}: {response.text}"
+                print(msg)
+                return False, msg
+                
+        except requests.exceptions.RequestException as error:
+            msg = f"A connection failure occurred: {error}"
+            print(msg)
+            return False, msg
+
 if __name__ == "__main__":
     load_dotenv()
     api = GlueUpAPI()

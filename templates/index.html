@@ -182,8 +182,18 @@
     function downloadInactiveContacts() {
         if (currentFilteredContacts.length === 0) return;
         
+        // Find which emails are actually selected
+        const checkboxes = document.querySelectorAll('.contact-checkbox:checked');
+        if (checkboxes.length === 0) {
+            alert("Please select at least one contact to export.");
+            return;
+        }
+        
+        const selectedEmails = new Set(Array.from(checkboxes).map(cb => cb.value));
+        const contactsToExport = currentFilteredContacts.filter(c => selectedEmails.has(c.email));
+        
         // Prepare data for Excel, flattening the raw_data
-        const exportData = currentFilteredContacts.map(c => {
+        const exportData = contactsToExport.map(c => {
             const baseData = {
                 "Name": c.name,
                 "Email": c.email,
@@ -276,7 +286,12 @@
                     <table class="table table-borderless table-hover align-middle mb-0">
                         <thead class="bg-light text-secondary text-uppercase small fw-bold" style="letter-spacing: 0.5px;">
                             <tr>
-                                <th class="ps-4 py-3">Name</th>
+                                <th class="ps-4 py-3" style="width: 40px;">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="selectAllCheckbox" onclick="toggleAllCheckboxes(this)" checked>
+                                    </div>
+                                </th>
+                                <th class="py-3">Name</th>
                                 <th class="py-3">Email</th>
                                 <th class="py-3">Event Attended</th>
                                 <th class="pe-4 py-3 text-end">Event Date</th>
@@ -290,8 +305,13 @@
             let rowClass = idx !== filtered.length - 1 ? 'border-bottom border-light' : '';
             
             tableHTML += `
-                <tr class="${rowClass}">
-                    <td class="ps-4 py-3 fw-bold text-dark">${contact.name}</td>
+                <tr class="${rowClass}" id="row-${contact.contact_id}">
+                    <td class="ps-4 py-3">
+                        <div class="form-check">
+                            <input class="form-check-input contact-checkbox" type="checkbox" value="${contact.email}" checked>
+                        </div>
+                    </td>
+                    <td class="py-3 fw-bold text-dark">${contact.name}</td>
                     <td class="py-3 text-muted">${contact.email}</td>
                     <td class="py-3">
                         <div class="d-flex align-items-center">
@@ -319,6 +339,13 @@
         `;
         
         output.innerHTML = headerHTML + tableHTML;
+    }
+
+    function toggleAllCheckboxes(source) {
+        const checkboxes = document.querySelectorAll('.contact-checkbox');
+        checkboxes.forEach(cb => {
+            cb.checked = source.checked;
+        });
     }
 
     // Automatically scan for inactive contacts when the page loads
