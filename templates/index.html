@@ -197,22 +197,47 @@
             const baseData = {
                 "Name": c.name,
                 "Email": c.email,
-                "Event Attended": c.event_title,
-                "Event Date": c.event_date,
+                "Total Events Attended": c.total_events_attended,
+                "All Events Attended": (c.all_events || []).join(" | "),
+                "Last Event Attended": c.event_title,
+                "Last Event Date": c.event_date,
                 "Event Visibility": c.is_public ? "Public" : "Private"
             };
             
-            // Unpack everything from Glue Up's raw payload (custom fields, answers, company, etc.)
+            // Explicitly extract readable Event Registration / Activity Data
             if (c.raw_data) {
+                // Attendance Status
+                if (c.raw_data.status) {
+                    baseData["Attendance Status"] = c.raw_data.status;
+                }
+                
+                // Ticket Information
+                if (c.raw_data.ticket) {
+                    baseData["Ticket Type"] = c.raw_data.ticket.name || 'Unknown Ticket';
+                    if (c.raw_data.ticket.price !== undefined) {
+                        baseData["Ticket Price"] = c.raw_data.ticket.price;
+                    }
+                }
+                
+                // Registration Data
+                if (c.raw_data.registration) {
+                    if (c.raw_data.registration.createdDate) {
+                        const regDate = new Date(c.raw_data.registration.createdDate).toISOString().split('T')[0];
+                        baseData["Registration Date"] = regDate;
+                    }
+                    if (c.raw_data.registration.status) {
+                        baseData["Registration Status"] = c.raw_data.registration.status;
+                    }
+                }
+                
+                // Flatten custom fields or answers if needed, otherwise leave as JSON
                 Object.keys(c.raw_data).forEach(key => {
                     const val = c.raw_data[key];
-                    // Skip nulls or empty arrays
-                    if (val === null || val === undefined) return;
+                    // Skip nulls, empty arrays, or keys we already explicitly extracted
+                    if (val === null || val === undefined || ['status', 'ticket', 'registration', 'emailAddress'].includes(key)) return;
                     
                     // If it's a complex object (like customFields or answers), stringify it so it fits in a single Excel cell
                     if (typeof val === 'object') {
-                        // Special handling for emailAddress object to avoid redundancy
-                        if (key === 'emailAddress') return; 
                         baseData[`Raw_${key}`] = JSON.stringify(val);
                     } else {
                         baseData[`Raw_${key}`] = val;

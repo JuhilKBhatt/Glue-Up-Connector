@@ -64,44 +64,89 @@
     });
 
     function handleFile(file) {
-        document.getElementById("status").innerHTML = `<div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div> Processing ${file.name}...`;
-        const reader = new FileReader();
-
-        reader.onload = function(e) {
-            const data = new Uint8Array(e.target.result);
-            const workbook = XLSX.read(data, {type: 'array'});
-            
-            const firstSheetName = workbook.SheetNames[0];
-            const worksheet = workbook.Sheets[firstSheetName];
-            
-            const json = XLSX.utils.sheet_to_json(worksheet, {defval: ""});
-            
-            if (json.length === 0) {
-                document.getElementById("status").innerHTML = '<span class="text-danger"><i class="fa-solid fa-circle-exclamation"></i> Error: File is empty or could not be parsed.</span>';
-                return;
-            }
-
-            const keys = Object.keys(json[0]);
-            let emailKey = keys.find(k => k.toLowerCase().includes("email"));
-
-            if (!emailKey) {
-                document.getElementById("status").innerHTML = '<span class="text-danger"><i class="fa-solid fa-circle-exclamation"></i> Error: Could not find an Email column in the file.</span>';
-                return;
-            }
-
-            const archivedRecords = [];
-            
-            json.forEach(row => {
-                const email = (row[emailKey] || "").toLowerCase().trim();
-                if (email.includes(".archive") || email.includes("-archive")) {
-                    archivedRecords.push(row);
+        document.getElementById("status").innerHTML = `<div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div> Fetching event history from Glue Up (this may take a minute)...`;
+        
+        // Fetch event history first
+        fetch('/api/inactive-contacts')
+            .then(res => res.json())
+            .then(apiRes => {
+                const eventDataMap = new Map();
+                if (apiRes.status === 'success') {
+                    apiRes.data.forEach(c => {
+                        eventDataMap.set(c.email.toLowerCase(), c);
+                    });
                 }
+                
+                document.getElementById("status").innerHTML = `<div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div> Processing ${file.name}...`;
+                
+                const reader = new FileReader();
+                
+                reader.onload = function(e) {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, {type: 'array'});
+                    
+                    const firstSheetName = workbook.SheetNames[0];
+                    const worksheet = workbook.Sheets[firstSheetName];
+                    
+                    const json = XLSX.utils.sheet_to_json(worksheet, {defval: ""});
+                    
+                    if (json.length === 0) {
+                        document.getElementById("status").innerHTML = '<span class="text-danger"><i class="fa-solid fa-circle-exclamation"></i> Error: File is empty or could not be parsed.</span>';
+                        return;
+                    }
+
+                    const keys = Object.keys(json[0]);
+                    let emailKey = keys.find(k => k.toLowerCase().includes("email"));
+
+                    if (!emailKey) {
+                        document.getElementById("status").innerHTML = '<span class="text-danger"><i class="fa-solid fa-circle-exclamation"></i> Error: Could not find an Email column in the file.</span>';
+                        return;
+                    }
+
+                    const archivedRecords = [];
+                    
+                    json.forEach(row => {
+                        const email = (row[emailKey] || "").toLowerCase().trim();
+                        // Support any dormant or archive tag
+                        if (email.includes(".archive") || email.includes("-archive") || email.includes(".dormant")) {
+                            
+                            // Strip the tags to match the original email in the Glue Up event history
+                            let cleanEmail = email
+                                .replace(".archive", "")
+                                .replace("-archive", "")
+                                .replace(".dormant", "");
+                            
+                            // Merge Event Registration Data if found
+                            if (eventDataMap.has(cleanEmail)) {
+                                const c = eventDataMap.get(cleanEmail);
+                                row["Total Events Attended"] = c.total_events_attended;
+                                row["All Events Attended"] = (c.all_events || []).join(" | ");
+                                row["Last Event Date"] = c.event_date;
+                                
+                                if (c.raw_data) {
+                                    if (c.raw_data.status) row["Attendance Status"] = c.raw_data.status;
+                                    if (c.raw_data.ticket && c.raw_data.ticket.name) row["Ticket Type"] = c.raw_data.ticket.name;
+                                    if (c.raw_data.registration && c.raw_data.registration.createdDate) {
+                                        row["Registration Date"] = new Date(c.raw_data.registration.createdDate).toISOString().split('T')[0];
+                                    }
+                                }
+                            } else {
+                                row["Total Events Attended"] = 0;
+                                row["All Events Attended"] = "None";
+                            }
+                            
+                            archivedRecords.push(row);
+                        }
+                    });
+
+                    renderOutput(archivedRecords, file.name);
+                };
+
+                reader.readAsArrayBuffer(file);
+            })
+            .catch(err => {
+                document.getElementById("status").innerHTML = `<span class="text-danger">Failed to fetch event history: ${err}</span>`;
             });
-
-            renderOutput(archivedRecords, file.name);
-        };
-
-        reader.readAsArrayBuffer(file);
     }
 
     function downloadExcel(data, originalFilename) {
@@ -130,8 +175,11 @@
 
         document.getElementById("status").innerHTML = `<div class="alert alert-warning border-0 shadow-sm rounded-4"><i class="fa-solid fa-triangle-exclamation me-2"></i> Found <strong>${records.length}</strong> archived records.</div>`;
 
-        // Build preview table
-        const keys = Object.keys(records[0]).slice(0, 5); // Preview first 5 columns
+        // Build preview table prioritizing the new Event Data columns
+        const allKeys = Object.keys(records[0]);
+        const eventKeys = allKeys.filter(k => k === "Total Events Attended" || k === "All Events Attended" || k === "Attendance Status");
+        const baseKeys = allKeys.filter(k => !eventKeys.includes(k)).slice(0, 3);
+        const keys = [...baseKeys, ...eventKeys];
 
         let tableHTML = `
             <div class="card shadow-sm border-0 rounded-4 overflow-hidden mt-4">
@@ -164,13 +212,15 @@
 
         tableHTML += `</tbody></table></div></div>`;
         
+        window.currentArchivedRecords = records;
+        
         const headerHTML = `
             <div class="d-flex justify-content-between align-items-center mb-4 mt-2 px-2">
                 <div>
                     <h5 class="fw-bold text-dark mb-0">Archived Records</h5>
                     <p class="text-muted small mb-0">Ready to download ${records.length} records</p>
                 </div>
-                <button class="btn btn-success btn-lg rounded-pill shadow-sm px-4" onclick="downloadExcel(records, '${filename}')">
+                <button class="btn btn-success btn-lg rounded-pill shadow-sm px-4" onclick="downloadExcel(window.currentArchivedRecords, '${filename}')">
                     <i class="fa-solid fa-file-excel me-2"></i> Download Excel
                 </button>
             </div>

@@ -117,32 +117,40 @@ class GlueUpAPI:
                         "contact_id": att.get("contactId", "N/A"),
                         "event_title": "",
                         "is_public": True,
-                        "raw_data": {}
+                        "raw_data": att,
+                        "all_events": []
                     }
                 
                 attendee_data[email]["count"] += 1
+                
+                # Keep a log of every event they attended
+                date_str = datetime.fromtimestamp(event_time / 1000.0, tz=timezone.utc).strftime('%Y-%m-%d')
+                attendee_data[email]["all_events"].append(f"{date_str}: {event_title}")
+                
                 if event_time >= attendee_data[email]["latest_event_time"]:
                     attendee_data[email]["latest_event_time"] = event_time
                     attendee_data[email]["event_title"] = event_title
                     attendee_data[email]["is_public"] = is_public
+                    # Keep the raw data of their latest registration
                     attendee_data[email]["raw_data"] = att
                     
-        inactive_contacts = []
+        all_contacts = []
         for email, data in attendee_data.items():
-            if data["count"] == 1:
-                date_str = datetime.fromtimestamp(data["latest_event_time"] / 1000.0, tz=timezone.utc).strftime('%Y-%m-%d')
-                inactive_contacts.append({
-                    "email": email,
-                    "name": data["name"],
-                    "event_date": date_str,
-                    "event_time_ms": data["latest_event_time"],
-                    "event_title": data["event_title"],
-                    "is_public": data["is_public"],
-                    "contact_id": data["contact_id"],
-                    "raw_data": data["raw_data"]
-                })
-                
-        return inactive_contacts
+            date_str = datetime.fromtimestamp(data["latest_event_time"] / 1000.0, tz=timezone.utc).strftime('%Y-%m-%d')
+            all_contacts.append({
+                "email": email,
+                "name": data["name"],
+                "event_date": date_str,
+                "event_time_ms": data["latest_event_time"],
+                "event_title": data["event_title"],
+                "is_public": data["is_public"],
+                "contact_id": data["contact_id"],
+                "total_events_attended": data["count"],
+                "all_events": data["all_events"],
+                "raw_data": data["raw_data"]
+            })
+            
+        return all_contacts
 
     def get_all_invoices(self):
         """Fetches all invoices (or orders) in the organization's history."""
