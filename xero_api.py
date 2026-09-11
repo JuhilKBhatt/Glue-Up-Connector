@@ -154,16 +154,17 @@ def sync_invoice():
             total_amount = float(item.get('amount', 0))
             quantity = float(item.get('quantity', 1.0))
             
-            # Xero multiplies unit_amount by quantity. Since Glue Up provides the total amount,
-            # we must derive the true unit price by dividing the total by the quantity.
+            # Xero multiplies unit_amount by quantity. Xero supports up to 4 decimal places for unit amounts
+            # to prevent rounding errors on the final line total.
             unit_amount = total_amount / quantity if quantity != 0 else total_amount
 
             line_items.append(
                 LineItem(
                     description=item.get('description', 'Membership Fee'),
-                    unit_amount=round(unit_amount, 2),
+                    unit_amount=round(unit_amount, 4),
                     quantity=quantity,
-                    account_code=account_code
+                    account_code=account_code,
+                    tax_type="OUTPUT"  # Must exactly match a Xero tax code (e.g., OUTPUT for standard sales tax)
                 )
             )
             
@@ -184,9 +185,11 @@ def sync_invoice():
         # Xero identifies contacts primarily by Name. Prefer company name if B2B.
         contact_display_name = company_name if company_name else (person_name if person_name else "AJBCC Member (Synced via Glue Up)")
 
+        # In a strict blueprint, we query by Email if available. If not, use name.
+        contact_email = invoice_data.get('contact_email')
         reference_str = f"GlueUp-{invoice_data.get('invoice_id')}"
         
-        from xero_python.accounting import LineAmountTypes
+        from xero_python.accounting import LineAmountTypes, Payment, Account
         
         # Map Glue Up Status to Xero Status
         glue_up_status = invoice_data.get('status', 'Unpaid')
@@ -196,45 +199,118 @@ def sync_invoice():
         else:
             xero_status = "DRAFT"
 
-        # Build the Xero Invoice
-        xero_invoice = Invoice(
-            type="ACCREC", 
-            contact=Contact(name=contact_display_name), 
-            line_items=line_items,
-            date=parsed_date,
-            due_date=parsed_date, # Default due date
-            reference=reference_str,
-            line_amount_types=LineAmountTypes.INCLUSIVE, # Ensures Xero doesn't add GST on top of Glue Up totals
-            status=xero_status
-        )
-        
-        # Helper function to perform the sync with duplicate check
+        # Helper function to perform the sync with duplicate check and payments
         def attempt_sync():
-            # 1. Check for duplicates
-            existing = accounting_api.get_invoices(
+            # 0. Check for existing Contact in Xero to prevent duplicates
+            contact_obj = Contact(name=contact_display_name)
+            try:
+                # Blueprint: Query Xero's GET /Contacts endpoint using the customer's email address or Glue Up ID.
+                if contact_email:
+                    where_clause = f'EmailAddress=="{contact_email}"'
+                else:
+                    safe_name = contact_display_name.replace('"', '\\"')
+                    where_clause = f'Name=="{safe_name}"'
+                    
+                existing_contacts = accounting_api.get_contacts(
+                    xero_tenant_id=xero_tenant_id,
+                    where=where_clause
+                )
+                if existing_contacts and existing_contacts.contacts:
+                    # Blueprint: If they exist, retrieve their Xero ContactID.
+                    contact_obj = Contact(contact_id=existing_contacts.contacts[0].contact_id)
+                else:
+                    # Blueprint: If they do not exist, send a POST /Contacts request to create them and store the new ContactID.
+                    new_contact = accounting_api.create_contacts(
+                        xero_tenant_id=xero_tenant_id,
+                        contacts={"contacts": [Contact(name=contact_display_name, email_address=contact_email)]}
+                    )
+                    contact_obj = Contact(contact_id=new_contact.contacts[0].contact_id)
+            except Exception as e:
+                print(f"Warning: Failed to query/create contact {contact_display_name}: {str(e)}")
+                # Fallback to just passing the name and letting Xero decide
+                pass
+            
+            # 1. Blueprint: Check for Duplicates
+            existing_invoices = accounting_api.get_invoices(
                 xero_tenant_id=xero_tenant_id,
                 where=f'Reference=="{reference_str}"'
             )
-            if existing and existing.invoices:
+            if existing_invoices and existing_invoices.invoices:
                 return False, "Invoice is already synced to Xero!"
                 
-            # 2. Push to Xero if it doesn't exist
-            accounting_api.create_invoices(
+            # 2. Blueprint: Map the Invoice Data
+            xero_invoice = Invoice(
+                type="ACCREC", 
+                contact=contact_obj, 
+                line_items=line_items,
+                date=parsed_date,
+                due_date=parsed_date,
+                reference=reference_str,
+                line_amount_types=LineAmountTypes.INCLUSIVE,
+                status=xero_status
+            )
+                
+            # 3. Push to Xero
+            created_invoices = accounting_api.create_invoices(
                 xero_tenant_id=xero_tenant_id, 
                 invoices={"invoices": [xero_invoice]}
             )
-            return True, "Invoice successfully pushed to Xero as DRAFT!"
+            invoice_id = created_invoices.invoices[0].invoice_id
+            
+            # 4. Blueprint: Handling Payments (Sync the payment so the invoice doesn't sit as Awaiting Payment)
+            if glue_up_status == 'Paid':
+                try:
+                    # Find a Bank/Clearing Account to apply the payment to
+                    bank_accounts = accounting_api.get_accounts(
+                        xero_tenant_id=xero_tenant_id,
+                        where='Type=="BANK"'
+                    )
+                    if bank_accounts and bank_accounts.accounts:
+                        clearing_account_id = bank_accounts.accounts[0].account_id
+                        
+                        payment = Payment(
+                            invoice=Invoice(invoice_id=invoice_id),
+                            account=Account(account_id=clearing_account_id),
+                            amount=sum(float(item.get('amount', 0)) for item in invoice_data.get('items', [])),
+                            date=parsed_date
+                        )
+                        accounting_api.create_payment(
+                            xero_tenant_id=xero_tenant_id,
+                            payment=payment
+                        )
+                        return True, "Invoice successfully pushed to Xero and marked as PAID!"
+                except Exception as payment_err:
+                    print(f"Payment sync failed: {payment_err}")
+                    return True, "Invoice pushed to Xero, but Payment sync failed (missing clearing account)."
+                    
+            return True, "Invoice successfully pushed to Xero!"
 
-        try:
-            success, msg = attempt_sync()
-        except Exception as api_err:
-            # If the token expired (401), automatically refresh and retry
-            if "401" in str(api_err) or "Unauthorized" in str(api_err):
-                print("Xero token expired, attempting refresh...")
-                api_client.refresh_oauth2_token()
+        import time
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
                 success, msg = attempt_sync()
-            else:
-                raise api_err
+                break
+            except Exception as api_err:
+                # Blueprint: Rate Limiting (Exponential Backoff)
+                if "429" in str(api_err):
+                    if attempt < max_retries - 1:
+                        backoff = 2 ** attempt
+                        print(f"Xero Rate Limit Hit (429). Retrying in {backoff} seconds...")
+                        time.sleep(backoff)
+                        continue
+                    else:
+                        # Blueprint: Dead Letter Queue (Alert team)
+                        print("CRITICAL: Invoice failed to sync after retries. Pushing to Dead Letter Queue (DLQ)...")
+                        raise api_err
+                        
+                # Blueprint: Authentication (Auto token refresh)
+                elif "401" in str(api_err) or "Unauthorized" in str(api_err):
+                    print("Xero token expired, attempting refresh...")
+                    api_client.refresh_oauth2_token()
+                    # Will retry on next loop iteration
+                else:
+                    raise api_err
         
         return jsonify({
             "status": "success" if success else "error",
