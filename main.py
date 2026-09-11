@@ -41,6 +41,28 @@ def dedupe():
 def archiving():
     return render_template("archiving.html")
 
+@app.route("/events")
+def events_module():
+    return render_template("events.html")
+
+@app.route("/api/events-list")
+def api_get_all_events():
+    try:
+        api = GlueUpAPI()
+        events = api.get_all_events()
+        return jsonify({"status": "success", "data": events})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/api/event/<event_id>/attendees")
+def api_get_event_attendees(event_id):
+    try:
+        api = GlueUpAPI()
+        attendees = api.get_event_attendees(event_id)
+        return jsonify({"status": "success", "data": attendees})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 @app.route("/api/inactive-contacts")
 def api_get_inactive_contacts():
     try:

@@ -111,6 +111,9 @@
                 <li class="{% if request.path == '/archiving' %}active{% endif %}">
                     <a href="/archiving"><i class="fa-solid fa-box-archive"></i> Archiving</a>
                 </li>
+                <li class="{% if request.path == '/events' %}active{% endif %}">
+                    <a href="/events"><i class="fa-solid fa-calendar-check"></i> Event Registrations</a>
+                </li>
                 
                 <li class="px-3 mt-4 mb-2 text-uppercase fw-bold" style="font-size: 0.75rem; color: #5c5c77; letter-spacing: 1px;">Finance & Sync</li>
                 <li class="{% if request.path == '/invoices' %}active{% endif %}">

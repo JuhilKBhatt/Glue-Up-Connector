@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+
+{% block title %}Event Registrations - Glue Up Tools{% endblock %}
+
+{% block content %}
+<div class="card shadow-sm border-0 rounded-4 overflow-hidden mb-4">
+    <div class="card-header bg-white border-bottom pt-4 pb-0 px-4">
+        <h4 class="mb-3 fw-bold text-primary"><i class="fa-solid fa-calendar-check me-2"></i>Event Registrations</h4>
+        <ul class="nav nav-tabs border-bottom-0" id="eventsTab" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active fw-bold text-secondary" id="browse-tab" data-bs-toggle="tab" data-bs-target="#browse" type="button" role="tab" aria-controls="browse" aria-selected="true"><i class="fa-solid fa-list me-1"></i> Browse by Event</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link fw-bold text-secondary" id="search-tab" data-bs-toggle="tab" data-bs-target="#search" type="button" role="tab" aria-controls="search" aria-selected="false"><i class="fa-solid fa-user-magnifying-glass me-1"></i> Search by Contact</button>
+            </li>
+        </ul>
+    </div>
+    <div class="card-body p-4 tab-content" id="eventsTabContent">
+        
+        <!-- Tab 1: Browse Events -->
+        <div class="tab-pane fade show active" id="browse" role="tabpanel" aria-labelledby="browse-tab">
+            <p class="text-secondary mb-4">Browse your organization's entire event history. Click on an event to download a clean, structured Excel export of all its attendees.</p>
+            <div id="status" class="fw-bold text-success mb-4 fs-5 text-center">
+                <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div> Loading events from Glue Up...
+            </div>
+            <div id="output"></div>
+        </div>
+
+        <!-- Tab 2: Search Contacts -->
+        <div class="tab-pane fade" id="search" role="tabpanel" aria-labelledby="search-tab">
+            <p class="text-secondary mb-4">Search for a specific person by name or email to instantly download a complete timeline of every event they've ever attended.</p>
+            
+            <div class="input-group input-group-lg mb-4 shadow-sm rounded-4">
+                <span class="input-group-text bg-white border-end-0 rounded-start-4 text-muted px-4"><i class="fa-solid fa-magnifying-glass"></i></span>
+                <input type="text" class="form-control border-start-0 rounded-end-4 py-3 bg-white" id="contactSearchBox" placeholder="Search by name or email (e.g. John Doe)..." onkeyup="filterContacts()">
+            </div>
+            
+            <div id="contactStatus" class="fw-bold text-success mb-4 text-center">
+                <button class="btn btn-primary rounded-pill px-4 shadow-sm" onclick="loadContacts()"><i class="fa-solid fa-cloud-arrow-down me-2"></i> Load Contact Database</button>
+                <p class="text-muted small mt-2">This may take a minute as it cross-references all global events.</p>
+            </div>
+            
+            <div id="contactOutput"></div>
+        </div>
+        
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // --- BROWSE EVENTS TAB LOGIC ---
+    document.addEventListener('DOMContentLoaded', () => {
+        fetch('/api/events-list')
+            .then(res => res.json())
+            .then(data => {
+                if(data.status === 'success') {
+                    renderEvents(data.data);
+                } else {
+                    document.getElementById('status').innerHTML = `<span class="text-danger">Error loading events: ${data.message}</span>`;
+                }
+            })
+            .catch(err => {
+                document.getElementById('status').innerHTML = `<span class="text-danger">Connection error: ${err}</span>`;
+            });
+    });
+
+    function renderEvents(events) {
+        document.getElementById('status').innerHTML = `<span class="text-muted small">Loaded ${events.length} events from history.</span>`;
+        let html = `
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="bg-light text-secondary text-uppercase small fw-bold">
+                        <tr>
+                            <th class="ps-4 py-3">Event Date</th>
+                            <th class="py-3">Event Name</th>
+                            <th class="py-3">Visibility</th>
+                            <th class="pe-4 py-3 text-end">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody class="border-top-0">
+        `;
+        events.forEach((ev, idx) => {
+            let rowClass = idx !== events.length - 1 ? 'border-bottom border-light' : '';
+            const dateStr = new Date(ev.startDateTime).toISOString().split('T')[0];
+            const badge = ev.openToPublic 
+                ? '<span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25 rounded-pill px-2">Public</span>' 
+                : '<span class="badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25 rounded-pill px-2">Private</span>';
+            html += `
+                <tr class="${rowClass}">
+                    <td class="ps-4 py-3 text-secondary font-monospace">${dateStr}</td>
+                    <td class="py-3 fw-bold text-dark">${ev.title}</td>
+                    <td class="py-3">${badge}</td>
+                    <td class="pe-4 py-3 text-end">
+                        <button class="btn btn-sm btn-outline-primary rounded-pill px-3 fw-bold" onclick="downloadAttendees('${ev.id}', '${ev.title.replace(/'/g, "\\'")}')" id="btn-${ev.id}">
+                            <i class="fa-solid fa-download me-1"></i> Export
+                        </button>
+                    </td>
+                </tr>
+            `;
+        });
+        html += `</tbody></table></div>`;
+        document.getElementById('output').innerHTML = html;
+    }
+
+    function downloadAttendees(eventId, eventTitle) {
+        const btn = document.getElementById(`btn-${eventId}`);
+        const originalText = btn.innerHTML;
+        btn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>`;
+        btn.disabled = true;
+
+        fetch(`/api/event/${eventId}/attendees`)
+            .then(res => res.json())
+            .then(apiRes => {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+                if (apiRes.status !== 'success') { alert(`Error: ${apiRes.message}`); return; }
+                if (apiRes.data.length === 0) { alert("This event has no registered attendees."); return; }
+
+                const exportData = apiRes.data.map(att => {
+                    const emailObj = att.emailAddress || {};
+                    const email = typeof emailObj === 'string' ? emailObj : emailObj.value || "";
+                    const row = {
+                        "First Name": att.givenName || "",
+                        "Last Name": att.familyName || "",
+                        "Email": email,
+                        "Company": att.company || "",
+                        "Job Title": att.jobTitle || "",
+                        "Status": att.status || ""
+                    };
+                    if (att.ticket) {
+                        row["Ticket Type"] = att.ticket.name || "";
+                        if (att.ticket.price !== undefined) row["Ticket Price"] = att.ticket.price;
+                    }
+                    if (att.registration) {
+                        row["Registration Status"] = att.registration.status || "";
+                        if (att.registration.createdDate) row["Registration Date"] = new Date(att.registration.createdDate).toISOString().split('T')[0];
+                    }
+                    if (att.answers && Array.isArray(att.answers)) {
+                        att.answers.forEach((ans, i) => { row[`Custom Q${i+1}: ${ans.name || 'Answer'}`] = ans.value || ""; });
+                    }
+                    return row;
+                });
+                const worksheet = XLSX.utils.json_to_sheet(exportData);
+                const workbook = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(workbook, worksheet, "Attendees");
+                const safeTitle = eventTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+                XLSX.writeFile(workbook, `registrations_${safeTitle}.xlsx`);
+            })
+            .catch(err => {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+                alert(`Network error: ${err}`);
+            });
+    }
+
+    // --- SEARCH CONTACTS TAB LOGIC ---
+    let globalContacts = [];
+    
+    function loadContacts() {
+        document.getElementById('contactStatus').innerHTML = `<div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div> Scanning global history...`;
+        fetch('/api/inactive-contacts')
+            .then(res => res.json())
+            .then(data => {
+                if(data.status === 'success') {
+                    globalContacts = data.data;
+                    document.getElementById('contactStatus').innerHTML = `<span class="text-success"><i class="fa-solid fa-check-circle me-1"></i> Loaded ${globalContacts.length} total contacts. Start searching!</span>`;
+                    filterContacts();
+                } else {
+                    document.getElementById('contactStatus').innerHTML = `<span class="text-danger">Error: ${data.message}</span>`;
+                }
+            })
+            .catch(err => {
+                document.getElementById('contactStatus').innerHTML = `<span class="text-danger">Network error: ${err}</span>`;
+            });
+    }
+    
+    function filterContacts() {
+        const query = document.getElementById('contactSearchBox').value.toLowerCase();
+        const output = document.getElementById('contactOutput');
+        
+        if (globalContacts.length === 0) return;
+        if (query.length < 2) {
+            output.innerHTML = `<div class="text-center text-muted mt-4">Type at least 2 characters to search...</div>`;
+            return;
+        }
+        
+        const matches = globalContacts.filter(c => 
+            c.name.toLowerCase().includes(query) || 
+            c.email.toLowerCase().includes(query)
+        ).slice(0, 50); // limit to 50 results for UI performance
+        
+        if (matches.length === 0) {
+            output.innerHTML = `<div class="text-center text-warning mt-4"><i class="fa-solid fa-face-frown mb-2 fs-3"></i><br>No contacts found matching "${query}"</div>`;
+            return;
+        }
+        
+        let html = `
+            <div class="table-responsive mt-3">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="bg-light text-secondary text-uppercase small fw-bold">
+                        <tr>
+                            <th class="ps-4 py-3">Name</th>
+                            <th class="py-3">Email</th>
+                            <th class="py-3 text-center">Total Events</th>
+                            <th class="pe-4 py-3 text-end">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody class="border-top-0">
+        `;
+        
+        matches.forEach((c, idx) => {
+            html += `
+                <tr>
+                    <td class="ps-4 py-3 fw-bold text-dark">${c.name}</td>
+                    <td class="py-3 text-muted">${c.email}</td>
+                    <td class="py-3 text-center"><span class="badge bg-primary rounded-pill">${c.total_events_attended}</span></td>
+                    <td class="pe-4 py-3 text-end">
+                        <button class="btn btn-sm btn-success rounded-pill px-3 fw-bold" onclick="downloadContactHistory('${c.email}')">
+                            <i class="fa-solid fa-file-excel me-1"></i> Timeline
+                        </button>
+                    </td>
+                </tr>
+            `;
+        });
+        
+        html += `</tbody></table></div>`;
+        output.innerHTML = html;
+    }
+    
+    function downloadContactHistory(email) {
+        const contact = globalContacts.find(c => c.email === email);
+        if (!contact) return;
+        
+        // Format their event history array into rows for excel
+        const exportData = (contact.all_events || []).map(evString => {
+            // evString format: "YYYY-MM-DD: Event Title"
+            const parts = evString.split(": ");
+            const date = parts[0];
+            const title = parts.slice(1).join(": ");
+            
+            return {
+                "Contact Name": contact.name,
+                "Email": contact.email,
+                "Event Attended": title,
+                "Event Date": date
+            };
+        });
+        
+        if (exportData.length === 0) {
+            exportData.push({
+                "Contact Name": contact.name,
+                "Email": contact.email,
+                "Event Attended": "No events found",
+                "Event Date": "N/A"
+            });
+        }
+        
+        const worksheet = XLSX.utils.json_to_sheet(exportData);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Event Timeline");
+        
+        const safeName = contact.name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+        XLSX.writeFile(workbook, `event_history_${safeName}.xlsx`);
+    }
+</script>
+{% endblock %}
