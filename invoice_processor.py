@@ -11,8 +11,13 @@ def fetch_invoices():
         api = GlueUpAPI()
         raw_invoices = api.get_all_invoices()
         
-        # Get requested date from query params, default to today
-        target_date = request.args.get('date', datetime.now().strftime("%Y-%m-%d"))
+        # Default to the current month (from 1st of month to today) if not provided
+        today = datetime.now()
+        first_of_month = today.replace(day=1).strftime("%Y-%m-%d")
+        today_str = today.strftime("%Y-%m-%d")
+        
+        from_date = request.args.get('from_date', first_of_month)
+        to_date = request.args.get('to_date', today_str)
         
         processed_invoices = []
         for payload in raw_invoices:
@@ -20,21 +25,26 @@ def fetch_invoices():
             # Date field might be createdDate, issueDate, date, etc.
             invoice_date = payload.get('createdDate') or payload.get('issueDate') or payload.get('date')
             
-            is_target_date = False
+            invoice_date_str = None
             if invoice_date:
                 try:
                     if isinstance(invoice_date, (int, float)):
                         # Assume Unix timestamp in ms (standard for Glue Up)
                         dt = datetime.fromtimestamp(invoice_date / 1000.0)
-                        is_target_date = dt.strftime("%Y-%m-%d") == target_date
+                        invoice_date_str = dt.strftime("%Y-%m-%d")
                     else:
                         # Assume string like "2026-09-08T..."
-                        is_target_date = str(invoice_date).startswith(target_date)
+                        invoice_date_str = str(invoice_date)[:10]
                 except Exception:
                     pass
                     
-            # Skip if it's not from the target date (unless target_date is 'all')
-            if target_date != 'all' and not is_target_date:
+            # Skip if outside of the date range
+            if not invoice_date_str:
+                continue
+                
+            if from_date and invoice_date_str < from_date:
+                continue
+            if to_date and invoice_date_str > to_date:
                 continue
                 
             # We try to extract common fields
@@ -49,19 +59,33 @@ def fetch_invoices():
             # Calculate Status
             is_voided = payload.get('voided', False)
             balance_due = float(payload.get('balanceDue') or 0)
-            due_date = payload.get('dueDate')
+            glueup_status = payload.get('status')
             
-            # Use current time to check overdue
+            due_date_ms = payload.get('dueDate')
+            due_date_str = None
+            if due_date_ms:
+                try:
+                    if isinstance(due_date_ms, (int, float)):
+                        due_date_str = datetime.fromtimestamp(due_date_ms / 1000.0).strftime("%Y-%m-%d")
+                    else:
+                        due_date_str = str(due_date_ms)[:10]
+                except Exception:
+                    pass
+            if not due_date_str:
+                due_date_str = invoice_date_str
+            
             now_ms = datetime.now().timestamp() * 1000
             
-            if is_voided:
+            if is_voided or glueup_status in ['Voided', 'Void', 'Canceled']:
                 invoice_status = 'Void'
+            elif glueup_status == 'Draft':
+                invoice_status = 'Draft'
             elif balance_due <= 0:
                 invoice_status = 'Paid'
-            elif due_date and float(due_date) < now_ms:
+            elif due_date_ms and float(due_date_ms) < now_ms:
                 invoice_status = 'Overdue'
             else:
-                invoice_status = 'Unpaid'
+                invoice_status = 'Awaiting Payment'
                     
             line_items = payload.get('items') or payload.get('lineItems') or payload.get('line_items') or []
             
@@ -80,7 +104,8 @@ def fetch_invoices():
             # Formatted payload with a flat list of line items
             formatted_payload = {
                 "invoice_id": invoice_id,
-                "date": str(invoice_date),
+                "date": invoice_date_str,
+                "due_date": due_date_str,
                 "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "status": invoice_status,
                 "company_name": company_name,

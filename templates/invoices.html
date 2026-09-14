@@ -18,22 +18,27 @@
         <div class="bg-light rounded-4 p-4 mb-4" id="filterBar" style="display: none;">
             <div class="row g-3">
                 <div class="col-md-2">
-                    <label class="form-label text-muted small fw-bold text-uppercase">Fetch Date</label>
-                    <input type="date" class="form-control form-control-lg border-0 shadow-sm" id="fetchDate" onchange="fetchInvoices()">
+                    <label class="form-label text-muted small fw-bold text-uppercase">From Date</label>
+                    <input type="date" class="form-control border-0 shadow-sm" id="fromDate" onchange="fetchInvoices()">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label text-muted small fw-bold text-uppercase">To Date</label>
+                    <input type="date" class="form-control border-0 shadow-sm" id="toDate" onchange="fetchInvoices()">
                 </div>
                 <div class="col-md-2">
                     <label class="form-label text-muted small fw-bold text-uppercase">Status</label>
-                    <select class="form-select form-select-lg border-0 shadow-sm" id="filterStatus" onchange="applyFilters()">
+                    <select class="form-select border-0 shadow-sm" id="filterStatus" onchange="applyFilters()">
                         <option value="all">All Status</option>
-                        <option value="Unpaid">Unpaid</option>
+                        <option value="Awaiting Payment">Awaiting Payment</option>
                         <option value="Paid">Paid</option>
                         <option value="Overdue">Overdue</option>
                         <option value="Void">Void</option>
+                        <option value="Draft">Draft</option>
                     </select>
                 </div>
-                <div class="col-md-3">
+                <div class="col-md-2">
                     <label class="form-label text-muted small fw-bold text-uppercase">Item Type</label>
-                    <select class="form-select form-select-lg border-0 shadow-sm" id="filterType" onchange="applyFilters()">
+                    <select class="form-select border-0 shadow-sm" id="filterType" onchange="applyFilters()">
                         <option value="all">All Line Items</option>
                         <option value="Membership Application">Membership App</option>
                         <option value="Additional Member">Additional Member</option>
@@ -41,14 +46,14 @@
                 </div>
                 <div class="col-md-2">
                     <label class="form-label text-muted small fw-bold text-uppercase">Amount</label>
-                    <div class="input-group input-group-lg shadow-sm rounded">
+                    <div class="input-group shadow-sm rounded">
                         <input type="number" class="form-control border-0 px-2" id="filterMin" placeholder="Min" onkeyup="applyFilters()" onchange="applyFilters()">
                         <input type="number" class="form-control border-0 px-2 border-start" id="filterMax" placeholder="Max" onkeyup="applyFilters()" onchange="applyFilters()">
                     </div>
                 </div>
-                <div class="col-md-3">
+                <div class="col-md-2">
                     <label class="form-label text-muted small fw-bold text-uppercase">Search</label>
-                    <input type="text" class="form-control form-control-lg border-0 shadow-sm" id="filterSearch" placeholder="Invoice ID..." onkeyup="applyFilters()">
+                    <input type="text" class="form-control border-0 shadow-sm" id="filterSearch" placeholder="Invoice ID..." onkeyup="applyFilters()">
                 </div>
             </div>
         </div>
@@ -66,30 +71,36 @@
 
     async function fetchInvoices() {
         const output = document.getElementById('output');
-        const dateInput = document.getElementById('fetchDate');
+        const fromDateInput = document.getElementById('fromDate');
+        const toDateInput = document.getElementById('toDate');
         const fetchBtn = document.getElementById('fetchBtn');
         
-        // Default to today if empty
-        if (!dateInput.value) {
+        // Default to this month if empty
+        if (!fromDateInput.value || !toDateInput.value) {
             const today = new Date();
             const yyyy = today.getFullYear();
             const mm = String(today.getMonth() + 1).padStart(2, '0');
             const dd = String(today.getDate()).padStart(2, '0');
-            dateInput.value = `${yyyy}-${mm}-${dd}`;
+            
+            if (!fromDateInput.value) fromDateInput.value = `${yyyy}-${mm}-01`;
+            if (!toDateInput.value) toDateInput.value = `${yyyy}-${mm}-${dd}`;
         }
         
-        const targetDate = dateInput.value;
+        const fromDate = fromDateInput.value;
+        const toDate = toDateInput.value;
         
         if (fetchBtn) {
             fetchBtn.disabled = true;
             fetchBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Fetching...';
         }
         
+        let dateDesc = `between ${fromDate} and ${toDate}`;
+
         output.innerHTML = `
             <div class="card border-0 bg-light bg-opacity-50 rounded-4 p-5 text-center">
                 <div class="spinner-border text-primary mb-3" style="width: 3rem; height: 3rem;" role="status"></div>
                 <h5 class="fw-bold text-dark">Fetching Invoices...</h5>
-                <p class="text-muted mb-0">Querying Glue Up for invoices issued on ${targetDate}.</p>
+                <p class="text-muted mb-0">Querying Glue Up for invoices issued ${dateDesc}.</p>
             </div>
         `;
         
@@ -99,7 +110,7 @@
         }
         
         try {
-            const response = await fetch(`/api/invoices/fetch?date=${targetDate}`);
+            const response = await fetch(`/api/invoices/fetch?from_date=${fromDate}&to_date=${toDate}`);
             const data = await response.json();
             
             if (response.ok) {
@@ -113,7 +124,7 @@
                     output.innerHTML = `
                         <div class="card border-0 bg-warning bg-opacity-10 rounded-4 p-5 text-center text-warning-emphasis">
                             <i class="fa-solid fa-face-frown fs-1 mb-3"></i>
-                            <h5 class="fw-bold">No valid invoices found for ${targetDate}</h5>
+                            <h5 class="fw-bold">No valid invoices found ${dateDesc}</h5>
                             <p class="mb-0">Voided invoices are excluded.</p>
                         </div>
                     `;
@@ -292,8 +303,10 @@
                 statusBadge = '<span class="badge bg-danger ms-2">Overdue</span>';
             } else if (invoice.status === 'Void') {
                 statusBadge = '<span class="badge bg-secondary ms-2">Void</span>';
+            } else if (invoice.status === 'Draft') {
+                statusBadge = '<span class="badge bg-info text-dark ms-2">Draft</span>';
             } else {
-                statusBadge = '<span class="badge bg-warning text-dark ms-2">Unpaid</span>';
+                statusBadge = '<span class="badge bg-warning text-dark ms-2">Awaiting Payment</span>';
             }
             
             html += `

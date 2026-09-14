@@ -168,15 +168,22 @@ def sync_invoice():
                 )
             )
             
-        # Convert date string to python datetime object for Xero serialization
+        # Convert date strings to python datetime objects for Xero serialization
         from datetime import datetime
         raw_date = invoice_data.get('date')
+        raw_due_date = invoice_data.get('due_date')
         try:
-            # Attempt to parse YYYY-MM-DD
             parsed_date = datetime.strptime(raw_date, "%Y-%m-%d")
         except (ValueError, TypeError):
-            # Fallback to current date if parsing fails
             parsed_date = datetime.now()
+            
+        try:
+            if raw_due_date:
+                parsed_due_date = datetime.strptime(raw_due_date, "%Y-%m-%d")
+            else:
+                parsed_due_date = parsed_date
+        except (ValueError, TypeError):
+            parsed_due_date = parsed_date
 
         # Determine the best Contact Name to use in Xero
         company_name = invoice_data.get('company_name')
@@ -192,10 +199,10 @@ def sync_invoice():
         from xero_python.accounting import LineAmountTypes, Payment, Account
         
         # Map Glue Up Status to Xero Status
-        glue_up_status = invoice_data.get('status', 'Unpaid')
+        glue_up_status = invoice_data.get('status', 'Awaiting Payment')
         
-        if glue_up_status in ['Paid', 'Unpaid', 'Overdue']:
-            xero_status = "AUTHORISED"  # Xero requires invoices to be AUTHORISED before payments can be applied
+        if glue_up_status in ['Paid', 'Awaiting Payment', 'Overdue', 'Void']:
+            xero_status = "AUTHORISED"  # Must be AUTHORISED before payment/void
         else:
             xero_status = "DRAFT"
 
@@ -244,7 +251,7 @@ def sync_invoice():
                 contact=contact_obj, 
                 line_items=line_items,
                 date=parsed_date,
-                due_date=parsed_date,
+                due_date=parsed_due_date,
                 reference=reference_str,
                 line_amount_types=LineAmountTypes.INCLUSIVE,
                 status=xero_status
@@ -282,6 +289,23 @@ def sync_invoice():
                 except Exception as payment_err:
                     print(f"Payment sync failed: {payment_err}")
                     return True, "Invoice pushed to Xero, but Payment sync failed (missing clearing account)."
+            
+            # 5. Handle Voiding
+            if glue_up_status == 'Void':
+                try:
+                    void_invoice = Invoice(
+                        invoice_id=invoice_id,
+                        status="VOIDED"
+                    )
+                    accounting_api.update_invoice(
+                        xero_tenant_id=xero_tenant_id,
+                        invoice_id=invoice_id,
+                        invoices={"invoices": [void_invoice]}
+                    )
+                    return True, "Invoice successfully pushed to Xero and marked as VOID!"
+                except Exception as void_err:
+                    print(f"Void sync failed: {void_err}")
+                    return True, "Invoice pushed to Xero, but Void status update failed."
                     
             return True, "Invoice successfully pushed to Xero!"
 
