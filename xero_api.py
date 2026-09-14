@@ -13,7 +13,7 @@ xero_bp = Blueprint('xero_bp', __name__)
 CLIENT_ID = os.environ.get("XERO_CLIENT_ID")
 CLIENT_SECRET = os.environ.get("XERO_CLIENT_SECRET")
 # Example: http://localhost:5001/xero/callback for local dev
-REDIRECT_URI = os.environ.get("XERO_REDIRECT_URI", "http://localhost:5001/xero/callback")
+REDIRECT_URI = os.environ.get("XERO_REDIRECT_URI")
 
 # Dummy token saver and getter functions required by xero-python's set_oauth2_token
 def dummy_token_getter():
