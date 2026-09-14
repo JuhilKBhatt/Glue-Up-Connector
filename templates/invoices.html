@@ -118,6 +118,27 @@
                     allInvoices = data.data;
                     document.getElementById('filterBar').style.display = 'flex';
                     applyFilters();
+                    
+                    // Fire off background fetch for Xero statuses
+                    try {
+                        const invoiceIds = allInvoices.map(inv => inv.invoice_id);
+                        const statusResponse = await fetch('/api/xero/check_statuses', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ invoice_ids: invoiceIds })
+                        });
+                        const statusData = await statusResponse.json();
+                        if (statusResponse.ok && statusData.status === 'success') {
+                            allInvoices.forEach(inv => {
+                                if (statusData.data[inv.invoice_id]) {
+                                    inv.xero_status = statusData.data[inv.invoice_id];
+                                }
+                            });
+                            applyFilters();
+                        }
+                    } catch (e) {
+                        console.error('Failed to fetch Xero statuses:', e);
+                    }
                 } else {
                     allInvoices = [];
                     document.getElementById('filterBar').style.display = 'flex';
@@ -309,6 +330,16 @@
                 statusBadge = '<span class="badge bg-warning text-dark ms-2">Awaiting Payment</span>';
             }
             
+            let xeroBadge = '';
+            if (invoice.xero_status) {
+                let xeroColor = 'secondary';
+                if (invoice.xero_status === 'PAID') xeroColor = 'success';
+                else if (invoice.xero_status === 'AUTHORISED') xeroColor = 'primary';
+                else if (invoice.xero_status === 'DRAFT') xeroColor = 'info';
+                
+                xeroBadge = `<div class="mt-2 text-end"><small class="text-muted" style="font-size: 0.75rem;">Xero Status: <span class="badge bg-${xeroColor}-subtle text-${xeroColor} border border-${xeroColor}-subtle">${invoice.xero_status}</span></small></div>`;
+            }
+            
             html += `
             <div class="col-md-6 col-lg-4">
                 <div class="card h-100 shadow-sm border-0 rounded-4 overflow-hidden">
@@ -317,6 +348,7 @@
                             <h6 class="mb-0 text-primary fw-bold"><i class="fa-solid fa-file-invoice-dollar me-2"></i>#${invoice.invoice_id} ${statusBadge}</h6>
                             <span class="badge bg-light text-secondary border"><i class="fa-regular fa-clock me-1"></i>${displayDate}</span>
                         </div>
+                        ${xeroBadge}
                         <button class="btn btn-outline-success btn-sm w-100 mt-2" onclick="dummySync(this, '${invoice.invoice_id}')">
                             <i class="fa-solid fa-cloud-arrow-up"></i> Sync to Xero
                         </button>

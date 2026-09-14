@@ -237,13 +237,71 @@ def sync_invoice():
                 # Fallback to just passing the name and letting Xero decide
                 pass
             
-            # 1. Blueprint: Check for Duplicates
+            # 1. Blueprint: Check for Duplicates & Updates
             existing_invoices = accounting_api.get_invoices(
                 xero_tenant_id=xero_tenant_id,
                 where=f'Reference=="{reference_str}"'
             )
             if existing_invoices and existing_invoices.invoices:
-                return False, "Invoice is already synced to Xero!"
+                existing_invoice = existing_invoices.invoices[0]
+                invoice_id = existing_invoice.invoice_id
+                current_xero_status = existing_invoice.status
+                
+                if glue_up_status == 'Paid' and current_xero_status not in ['PAID', 'VOIDED']:
+                    if current_xero_status == 'DRAFT':
+                        accounting_api.update_invoice(
+                            xero_tenant_id=xero_tenant_id,
+                            invoice_id=invoice_id,
+                            invoices={"invoices": [Invoice(invoice_id=invoice_id, status="AUTHORISED")]}
+                        )
+                    try:
+                        bank_accounts = accounting_api.get_accounts(
+                            xero_tenant_id=xero_tenant_id,
+                            where='Type=="BANK"'
+                        )
+                        if bank_accounts and bank_accounts.accounts:
+                            clearing_account_id = bank_accounts.accounts[0].account_id
+                            payment = Payment(
+                                invoice=Invoice(invoice_id=invoice_id),
+                                account=Account(account_id=clearing_account_id),
+                                amount=sum(float(item.get('amount', 0)) for item in invoice_data.get('items', [])),
+                                date=parsed_date
+                            )
+                            accounting_api.create_payment(
+                                xero_tenant_id=xero_tenant_id,
+                                payment=payment
+                            )
+                            return True, "Existing Invoice updated and marked as PAID in Xero!"
+                        else:
+                            return True, "Existing Invoice found, but Payment sync failed (missing clearing account)."
+                    except Exception as e:
+                        return True, f"Existing Invoice found, but Payment sync failed: {str(e)}"
+                
+                elif glue_up_status == 'Void' and current_xero_status != 'VOIDED':
+                    if current_xero_status == 'PAID':
+                        return False, "Invoice is already PAID in Xero, cannot void."
+                    try:
+                        accounting_api.update_invoice(
+                            xero_tenant_id=xero_tenant_id,
+                            invoice_id=invoice_id,
+                            invoices={"invoices": [Invoice(invoice_id=invoice_id, status="VOIDED")]}
+                        )
+                        return True, "Existing Invoice marked as VOID in Xero!"
+                    except Exception as e:
+                        return True, f"Failed to Void existing invoice: {str(e)}"
+                        
+                elif xero_status != current_xero_status and xero_status not in ["VOIDED"] and current_xero_status not in ["VOIDED", "PAID"]:
+                    try:
+                        accounting_api.update_invoice(
+                            xero_tenant_id=xero_tenant_id,
+                            invoice_id=invoice_id,
+                            invoices={"invoices": [Invoice(invoice_id=invoice_id, status=xero_status)]}
+                        )
+                        return True, f"Existing Invoice status updated to {xero_status} in Xero!"
+                    except Exception as e:
+                        return True, f"Failed to update existing invoice status: {str(e)}"
+                else:
+                    return False, "Invoice is already synced to Xero and status is up to date!"
                 
             # 2. Blueprint: Map the Invoice Data
             xero_invoice = Invoice(
@@ -343,3 +401,57 @@ def sync_invoice():
         
     except Exception as e:
         return jsonify({"status": "error", "message": f"Xero API Error: {str(e)}"}), 500
+
+@xero_bp.route("/api/xero/check_statuses", methods=["POST"])
+def check_statuses():
+    """Bulk check the Xero status for a list of invoice IDs."""
+    payload = request.json
+    invoice_ids = payload.get('invoice_ids', [])
+    
+    if not invoice_ids:
+        return jsonify({"status": "success", "data": {}})
+        
+    xero_token = session.get('xero_token')
+    xero_tenant_id = session.get('xero_tenant_id')
+    
+    if not xero_token or not xero_tenant_id:
+        return jsonify({"status": "error", "message": "Not connected to Xero"}), 401
+        
+    try:
+        api_client.configuration.oauth2_token = OAuth2Token(
+            client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET
+        )
+        api_client.set_oauth2_token(xero_token)
+        accounting_api = AccountingApi(api_client)
+        
+        # Build OR clause for References (batch in chunks of 50 to avoid URL length limits)
+        results = {}
+        
+        # Helper to chunk list
+        def chunker(seq, size):
+            return (seq[pos:pos + size] for pos in range(0, len(seq), size))
+            
+        for chunk in chunker(invoice_ids, 50):
+            where_clause = " OR ".join([f'Reference=="GlueUp-{inv_id}"' for inv_id in chunk])
+            try:
+                existing_invoices = accounting_api.get_invoices(
+                    xero_tenant_id=xero_tenant_id,
+                    where=where_clause
+                )
+                if existing_invoices and existing_invoices.invoices:
+                    for inv in existing_invoices.invoices:
+                        # Extract the GlueUp ID from Reference
+                        ref = inv.reference
+                        if ref and ref.startswith("GlueUp-"):
+                            g_id = ref.replace("GlueUp-", "")
+                            results[g_id] = inv.status
+            except Exception as e:
+                print(f"Error fetching chunk: {e}")
+                pass
+                
+        return jsonify({"status": "success", "data": results})
+        
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
