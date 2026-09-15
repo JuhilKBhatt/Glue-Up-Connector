@@ -2,15 +2,62 @@
 
 {% block title %}Invoices - Glue Up Tools{% endblock %}
 
+{% block extra_css %}
+<style>
+    .search-hub-card {
+        border: 1px solid rgba(0, 0, 0, 0.08) !important;
+        background: #ffffff;
+    }
+    .search-box-wrapper {
+        border: 1.5px solid #e2e8f0;
+        transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+        background-color: #f8fafc;
+    }
+    .search-box-wrapper:focus-within {
+        border-color: #0d6efd !important;
+        background-color: #ffffff !important;
+        box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.12), 0 2px 8px rgba(0, 0, 0, 0.04) !important;
+    }
+    .status-pill {
+        transition: all 0.15s ease-in-out;
+        font-size: 0.82rem;
+    }
+    .status-pill:hover {
+        transform: translateY(-1px);
+    }
+    .sync-success-card {
+        border: 1px solid rgba(25, 135, 84, 0.25) !important;
+        background: linear-gradient(135deg, rgba(25, 135, 84, 0.08) 0%, rgba(25, 135, 84, 0.02) 100%) !important;
+        animation: fadeInSlideDown 0.3s ease-out;
+    }
+    @keyframes fadeInSlideDown {
+        from {
+            opacity: 0;
+            transform: translateY(-8px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="card shadow-sm border-0 rounded-4 overflow-hidden mb-4">
     <div class="card-header bg-white border-bottom pt-4 pb-3 px-4 d-flex flex-wrap align-items-center justify-content-between gap-3">
         <div>
             <h4 class="mb-1 fw-bold text-primary"><i class="fa-solid fa-file-invoice-dollar me-2"></i>Invoices & Xero Sync</h4>
             <div class="d-flex flex-wrap align-items-center gap-2 mt-1">
+                {% if has_mock_data %}
                 <span class="badge bg-primary-subtle text-primary border" id="modeBadge">
                     <i class="fa-solid fa-bolt me-1"></i>Mock Data (Glue Up Model)
                 </span>
+                {% else %}
+                <span class="badge bg-success-subtle text-success border" id="modeBadge">
+                    <i class="fa-solid fa-globe me-1"></i>Live Glue Up API
+                </span>
+                {% endif %}
                 <span class="text-muted small">&bull;</span>
                 <span id="xeroConnectionBadge" class="badge bg-secondary-subtle text-secondary border">
                     <span class="spinner-border spinner-border-sm me-1" style="width: 0.7rem; height: 0.7rem;" role="status"></span>Checking Xero...
@@ -25,12 +72,18 @@
             </div>
         </div>
         <div class="d-flex align-items-center gap-2">
+            {% if has_mock_data %}
             <button id="mockBtn" class="btn btn-primary rounded-pill shadow-sm px-4" onclick="setMode('mock')">
                 <i class="fa-solid fa-bolt me-2"></i>Load Mock Data
             </button>
             <button id="liveBtn" class="btn btn-outline-primary rounded-pill shadow-sm px-4" onclick="setMode('live')">
                 <i class="fa-solid fa-cloud-arrow-down me-2"></i>Fetch Live API
             </button>
+            {% else %}
+            <button id="liveBtn" class="btn btn-primary rounded-pill shadow-sm px-4" onclick="setMode('live')">
+                <i class="fa-solid fa-cloud-arrow-down me-2"></i>Fetch Live API
+            </button>
+            {% endif %}
             <span id="xeroAuthAction"></span>
         </div>
     </div>
@@ -43,50 +96,112 @@
             Every sync request actively verifies your live Xero connection.
         </p>
         
-        <div class="bg-light rounded-4 p-4 mb-4" id="filterBar">
-            <div class="row g-3">
-                <div class="col-md-2" id="dateFromCol">
-                    <label class="form-label text-muted small fw-bold text-uppercase">From Date</label>
-                    <input type="date" class="form-control border-0 shadow-sm" id="fromDate" onchange="triggerFetch()">
-                </div>
-                <div class="col-md-2" id="dateToCol">
-                    <label class="form-label text-muted small fw-bold text-uppercase">To Date</label>
-                    <input type="date" class="form-control border-0 shadow-sm" id="toDate" onchange="triggerFetch()">
-                </div>
-                <div class="col-md-2">
-                    <label class="form-label text-muted small fw-bold text-uppercase">Status</label>
-                    <select class="form-select border-0 shadow-sm" id="filterStatus" onchange="applyFilters()">
-                        <option value="all">All Status</option>
-                        <option value="Awaiting Payment">Awaiting Payment</option>
-                        <option value="Paid">Paid</option>
-                        <option value="Overdue">Overdue</option>
-                        <option value="Void">Void</option>
-                        <option value="Draft">Draft</option>
-                    </select>
-                </div>
-                <div class="col-md-2">
-                    <label class="form-label text-muted small fw-bold text-uppercase">Item Type</label>
-                    <select class="form-select border-0 shadow-sm" id="filterType" onchange="applyFilters()">
-                        <option value="all">All Line Items</option>
-                        <option value="Membership Application">Membership App</option>
-                        <option value="Additional Member">Additional Member</option>
-                        <option value="Event Ticket">Event Ticket</option>
-                        <option value="Custom / Sponsorship">Custom / Sponsorship</option>
-                    </select>
-                </div>
-                <div class="col-md-2">
-                    <label class="form-label text-muted small fw-bold text-uppercase">Amount</label>
-                    <div class="input-group shadow-sm rounded">
-                        <input type="number" class="form-control border-0 px-2" id="filterMin" placeholder="Min" onkeyup="applyFilters()" onchange="applyFilters()">
-                        <input type="number" class="form-control border-0 px-2 border-start" id="filterMax" placeholder="Max" onkeyup="applyFilters()" onchange="applyFilters()">
+        <!-- Search & Filter Hub -->
+        <div class="card border-0 shadow-sm rounded-4 mb-4 overflow-hidden search-hub-card">
+            <div class="p-3 p-md-4 bg-white">
+                <!-- Search Input with Modern Aesthetic -->
+                <div class="position-relative">
+                    <div class="d-flex align-items-center rounded-pill px-3 py-2 search-box-wrapper" id="searchBarContainer">
+                        <i class="fa-solid fa-magnifying-glass text-primary fs-5 ms-1 me-3"></i>
+                        <input type="text" 
+                               class="form-control border-0 bg-transparent shadow-none p-0 fs-6" 
+                               id="filterSearch" 
+                               placeholder="Search invoices by number, company, contact, email, phone, or address..." 
+                               oninput="handleSearchInput()" 
+                               onkeydown="handleSearchKey(event)"
+                               autocomplete="off">
+                        <button type="button" 
+                                id="clearSearchBtn" 
+                                class="btn btn-link text-muted p-0 ms-2 text-decoration-none d-none" 
+                                onclick="clearSearch()" 
+                                title="Clear search">
+                            <i class="fa-solid fa-circle-xmark fs-5"></i>
+                        </button>
+                        <span id="searchMatchCount" class="badge bg-primary-subtle text-primary border border-primary-subtle rounded-pill px-3 py-1 ms-2 font-monospace d-none" style="font-size: 0.75rem;"></span>
+                        <span class="badge bg-light text-muted border font-monospace px-2 py-1 ms-2 d-none d-lg-inline" title="Press / to focus search" style="font-size: 0.72rem;">/</span>
                     </div>
                 </div>
-                <div class="col-md-2">
-                    <label class="form-label text-muted small fw-bold text-uppercase">Search</label>
-                    <input type="text" class="form-control border-0 shadow-sm" id="filterSearch" placeholder="Invoice, Company..." onkeyup="applyFilters()">
+
+                <!-- Quick Filter Chips & Advanced Filters Toggle -->
+                <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mt-3 pt-1">
+                    <div class="d-flex flex-wrap align-items-center gap-2" id="statusPills">
+                        <span class="text-muted small fw-bold text-uppercase me-1" style="font-size: 0.7rem; letter-spacing: 0.5px;">Status:</span>
+                        <button type="button" class="btn btn-sm rounded-pill px-3 py-1 fw-semibold status-pill btn-primary shadow-sm" data-status="all" onclick="selectStatusPill('all')">
+                            All <span class="badge bg-white text-primary rounded-pill ms-1" id="countAll">0</span>
+                        </button>
+                        <button type="button" class="btn btn-sm rounded-pill px-3 py-1 fw-semibold status-pill btn-outline-secondary" data-status="Awaiting Payment" onclick="selectStatusPill('Awaiting Payment')">
+                            Awaiting Payment <span class="badge bg-warning text-dark rounded-pill ms-1" id="countAwaiting">0</span>
+                        </button>
+                        <button type="button" class="btn btn-sm rounded-pill px-3 py-1 fw-semibold status-pill btn-outline-secondary" data-status="Paid" onclick="selectStatusPill('Paid')">
+                            Paid <span class="badge bg-success text-white rounded-pill ms-1" id="countPaid">0</span>
+                        </button>
+                        <button type="button" class="btn btn-sm rounded-pill px-3 py-1 fw-semibold status-pill btn-outline-secondary" data-status="Overdue" onclick="selectStatusPill('Overdue')">
+                            Overdue <span class="badge bg-danger text-white rounded-pill ms-1" id="countOverdue">0</span>
+                        </button>
+                        <button type="button" class="btn btn-sm rounded-pill px-3 py-1 fw-semibold status-pill btn-outline-secondary" data-status="Void" onclick="selectStatusPill('Void')">
+                            Void <span class="badge bg-secondary text-white rounded-pill ms-1" id="countVoid">0</span>
+                        </button>
+                    </div>
+                    
+                    <div class="d-flex align-items-center gap-2 ms-auto">
+                        <button class="btn btn-sm btn-outline-secondary rounded-pill px-3 py-1" type="button" data-bs-toggle="collapse" data-bs-target="#advancedFilters" aria-expanded="false">
+                            <i class="fa-solid fa-sliders me-1 text-primary"></i>More Filters 
+                            <span id="activeFiltersBadge" class="badge bg-primary text-white rounded-pill ms-1 d-none">0</span>
+                        </button>
+                        <button class="btn btn-sm btn-link text-decoration-none text-muted p-0 ms-1 d-none" id="resetAllBtn" onclick="resetFilters()" title="Reset all filters">
+                            <i class="fa-solid fa-rotate-left me-1"></i>Reset
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Collapsible Advanced Filters Drawer -->
+            <div class="collapse bg-light bg-opacity-50 border-top" id="advancedFilters">
+                <div class="p-3 p-md-4">
+                    <div class="row g-3">
+                        <div class="col-md-3" id="dateFromCol">
+                            <label class="form-label text-muted small fw-bold text-uppercase">Issue Date From</label>
+                            <div class="input-group input-group-sm">
+                                <span class="input-group-text bg-white border-0 shadow-sm"><i class="fa-regular fa-calendar text-muted"></i></span>
+                                <input type="date" class="form-control border-0 shadow-sm" id="fromDate" onchange="triggerFetch()">
+                            </div>
+                        </div>
+                        <div class="col-md-3" id="dateToCol">
+                            <label class="form-label text-muted small fw-bold text-uppercase">Issue Date To</label>
+                            <div class="input-group input-group-sm">
+                                <span class="input-group-text bg-white border-0 shadow-sm"><i class="fa-regular fa-calendar text-muted"></i></span>
+                                <input type="date" class="form-control border-0 shadow-sm" id="toDate" onchange="triggerFetch()">
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label text-muted small fw-bold text-uppercase">Line Item Type</label>
+                            <select class="form-select form-select-sm border-0 shadow-sm" id="filterType" onchange="applyFilters()">
+                                <option value="all">All Line Items</option>
+                                <option value="Membership Application">Membership Application</option>
+                                <option value="Additional Member">Additional Member</option>
+                                <option value="Event Ticket">Event Ticket</option>
+                                <option value="Custom / Sponsorship">Custom / Sponsorship</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label text-muted small fw-bold text-uppercase">Total Amount ($ AUD)</label>
+                            <div class="input-group input-group-sm shadow-sm rounded">
+                                <span class="input-group-text bg-white border-0 text-muted">$</span>
+                                <input type="number" class="form-control border-0 px-2" id="filterMin" placeholder="Min" onkeyup="applyFilters()" onchange="applyFilters()">
+                                <span class="input-group-text bg-light border-0 text-muted">-</span>
+                                <input type="number" class="form-control border-0 px-2" id="filterMax" placeholder="Max" onkeyup="applyFilters()" onchange="applyFilters()">
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
+
+        <!-- Hidden input for backward compatibility with applyFilters() -->
+        <input type="hidden" id="filterStatus" value="all">
+
+        <!-- Dedicated Xero Sync Notification Banner Area (stays in place, never wiped by card re-render) -->
+        <div id="syncNotificationArea" class="mb-3"></div>
         
         <div id="output">
             <div class="p-5 text-center text-muted fs-5">
@@ -100,29 +215,45 @@
 
 {% block extra_js %}
 <script>
-    let currentMode = 'mock'; // 'mock' or 'live'
+    const hasMockData = {{ 'true' if has_mock_data else 'false' }};
+    let currentMode = hasMockData ? 'mock' : 'live'; // 'mock' or 'live'
     let allInvoices = [];
 
     function setMode(mode) {
+        if (mode === 'mock' && !hasMockData) {
+            mode = 'live';
+        }
         currentMode = mode;
         const mockBtn = document.getElementById('mockBtn');
         const liveBtn = document.getElementById('liveBtn');
         const modeBadge = document.getElementById('modeBadge');
 
         if (mode === 'mock') {
-            mockBtn.classList.remove('btn-outline-primary');
-            mockBtn.classList.add('btn-primary');
-            liveBtn.classList.remove('btn-primary');
-            liveBtn.classList.add('btn-outline-primary');
-            modeBadge.className = 'badge bg-primary-subtle text-primary border';
-            modeBadge.innerHTML = '<i class="fa-solid fa-bolt me-1"></i>Mock Data (Glue Up Model)';
+            if (mockBtn) {
+                mockBtn.classList.remove('btn-outline-primary');
+                mockBtn.classList.add('btn-primary');
+            }
+            if (liveBtn) {
+                liveBtn.classList.remove('btn-primary');
+                liveBtn.classList.add('btn-outline-primary');
+            }
+            if (modeBadge) {
+                modeBadge.className = 'badge bg-primary-subtle text-primary border';
+                modeBadge.innerHTML = '<i class="fa-solid fa-bolt me-1"></i>Mock Data (Glue Up Model)';
+            }
         } else {
-            liveBtn.classList.remove('btn-outline-primary');
-            liveBtn.classList.add('btn-primary');
-            mockBtn.classList.remove('btn-primary');
-            mockBtn.classList.add('btn-outline-primary');
-            modeBadge.className = 'badge bg-success-subtle text-success border';
-            modeBadge.innerHTML = '<i class="fa-solid fa-globe me-1"></i>Live Glue Up API';
+            if (liveBtn) {
+                liveBtn.classList.remove('btn-outline-primary');
+                liveBtn.classList.add('btn-primary');
+            }
+            if (mockBtn) {
+                mockBtn.classList.remove('btn-primary');
+                mockBtn.classList.add('btn-outline-primary');
+            }
+            if (modeBadge) {
+                modeBadge.className = 'badge bg-success-subtle text-success border';
+                modeBadge.innerHTML = '<i class="fa-solid fa-globe me-1"></i>Live Glue Up API';
+            }
         }
 
         fetchInvoices();
@@ -181,6 +312,7 @@
             if (response.ok && data.status === 'success') {
                 if (data.data && data.data.length > 0) {
                     allInvoices = data.data;
+                    updateStatusPillCounts();
                     applyFilters();
                     
                     // Background fetch for Xero statuses
@@ -209,11 +341,17 @@
                         <div class="card border-0 bg-warning bg-opacity-10 rounded-4 p-5 text-center text-warning-emphasis">
                             <i class="fa-solid fa-face-frown fs-1 mb-3"></i>
                             <h5 class="fw-bold">No invoices found for the selected period</h5>
-                            <p class="mb-3">Try adjusting your date range or switch back to Mock Data to test UI and syncing.</p>
+                            <p class="mb-3">${hasMockData ? 'Try adjusting your date range or switch back to Mock Data to test UI and syncing.' : 'Try expanding your date range to find past invoices.'}</p>
                             <div>
+                                ${hasMockData ? `
                                 <button class="btn btn-primary rounded-pill px-4" onclick="setMode('mock')">
                                     <i class="fa-solid fa-bolt me-2"></i>Switch to Mock Data
                                 </button>
+                                ` : `
+                                <button class="btn btn-outline-secondary rounded-pill px-4" onclick="document.getElementById('fromDate').focus()">
+                                    <i class="fa-solid fa-calendar me-2"></i>Adjust Date Range
+                                </button>
+                                `}
                             </div>
                         </div>
                     `;
@@ -263,7 +401,7 @@
                 btn.disabled = false;
                 btn.innerHTML = originalHtml;
                 
-                const output = document.getElementById('output');
+                const notifArea = document.getElementById('syncNotificationArea');
                 const alertHtml = `
                     <div class="alert alert-danger alert-dismissible fade show shadow-sm rounded-4 border-0 mb-4" role="alert">
                         <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
@@ -283,8 +421,8 @@
                         <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                     </div>
                 `;
-                output.insertAdjacentHTML('afterbegin', alertHtml);
-                window.scrollTo({ top: 0, behavior: 'smooth' });
+                notifArea.innerHTML = alertHtml;
+                notifArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                 checkXeroStatus();
                 return;
             }
@@ -294,7 +432,7 @@
                 btn.disabled = false;
                 btn.innerHTML = originalHtml;
 
-                const output = document.getElementById('output');
+                const notifArea = document.getElementById('syncNotificationArea');
                 const errMsg = data.message || 'Xero synchronization failed.';
                 const alertHtml = `
                     <div class="alert alert-danger alert-dismissible fade show shadow-sm rounded-4 border-0 mb-4" role="alert">
@@ -308,18 +446,18 @@
                         <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                     </div>
                 `;
-                output.insertAdjacentHTML('afterbegin', alertHtml);
-                window.scrollTo({ top: 0, behavior: 'smooth' });
+                notifArea.innerHTML = alertHtml;
+                notifArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                 return;
             }
             
-            // 3. Sync succeeded
+            // 3. Sync succeeded (persistent notification banner)
             if (data.status === 'success') {
                 btn.innerHTML = '<i class="fa-solid fa-check me-1"></i> Synced';
                 btn.classList.remove('btn-outline-success', 'btn-primary');
                 btn.classList.add('btn-success');
                 
-                // Update local status badge
+                // Update local status badge in memory
                 if (data.xero_status) {
                     invoiceData.xero_status = data.xero_status;
                 } else if (invoiceData.status === 'Paid') {
@@ -328,36 +466,49 @@
                     invoiceData.xero_status = 'AUTHORISED';
                 }
                 
-                // Show notification banner
-                const output = document.getElementById('output');
+                // Show notification in dedicated banner area (never wiped by applyFilters card re-render)
+                const notifArea = document.getElementById('syncNotificationArea');
                 const badgeMode = data.simulated 
                     ? '<span class="badge bg-warning text-dark me-2">Dry-Run Simulation</span>' 
                     : '<span class="badge bg-success me-2">Live Xero</span>';
 
                 const xeroLinkHtml = data.xero_url 
-                    ? `<div class="mt-2"><a href="${data.xero_url}" target="_blank" class="btn btn-sm btn-outline-success rounded-pill px-3"><i class="fa-solid fa-arrow-up-right-from-square me-1"></i>View in Xero (#${data.xero_number || invoiceData.invoice_number})</a></div>`
+                    ? `<div class="mt-3">
+                        <a href="${data.xero_url}" target="_blank" class="btn btn-success btn-sm rounded-pill px-4 shadow-sm fw-semibold">
+                            <i class="fa-solid fa-arrow-up-right-from-square me-2"></i>Open Invoice in Xero (#${data.xero_number || invoiceData.invoice_number})
+                        </a>
+                    </div>` 
                     : '';
 
                 const alertHtml = `
-                    <div class="alert alert-success alert-dismissible fade show shadow-sm rounded-4 border-0 mb-4" role="alert">
-                        <div class="d-flex align-items-center">
-                            <i class="fa-solid fa-circle-check fs-4 me-3 text-success"></i>
-                            <div>
-                                <div class="fw-bold">${badgeMode}Sync Successful!</div>
-                                <div class="small">${data.message}</div>
+                    <div class="alert alert-success alert-dismissible fade show shadow-sm rounded-4 p-3 p-md-4 mb-4 sync-success-card" role="alert">
+                        <div class="d-flex align-items-start">
+                            <div class="bg-success text-white rounded-circle p-2 me-3 d-flex align-items-center justify-content-center shadow-sm" style="width: 42px; height: 42px; min-width: 42px;">
+                                <i class="fa-solid fa-check fs-5"></i>
+                            </div>
+                            <div class="flex-grow-1">
+                                <div class="d-flex align-items-center flex-wrap gap-2 mb-1">
+                                    <h6 class="fw-bold mb-0 text-success-emphasis">Xero Sync Successful!</h6>
+                                    ${badgeMode}
+                                    <span class="badge bg-success-subtle text-success border border-success-subtle">${data.xero_status || invoiceData.xero_status}</span>
+                                </div>
+                                <div class="text-secondary small mb-1">${data.message}</div>
+                                <div class="text-muted small" style="font-size: 0.8rem;">
+                                    <strong>Contact:</strong> ${invoiceData.company_name || invoiceData.contact_name} &bull; 
+                                    <strong>Invoice:</strong> #${data.xero_number || invoiceData.invoice_number} &bull;
+                                    <strong>Status:</strong> ${data.xero_status || invoiceData.xero_status}
+                                </div>
                                 ${xeroLinkHtml}
                             </div>
+                            <button type="button" class="btn-close ms-2" data-bs-dismiss="alert" aria-label="Close"></button>
                         </div>
-                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                     </div>
                 `;
-                output.insertAdjacentHTML('afterbegin', alertHtml);
-                window.scrollTo({ top: 0, behavior: 'smooth' });
+                notifArea.innerHTML = alertHtml;
+                notifArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                 
-                // Re-render to update the status pill on the card
-                setTimeout(() => {
-                    applyFilters();
-                }, 1000);
+                // Immediately re-render cards to show updated Xero pill without wiping notification
+                applyFilters();
             }
         } catch (error) {
             alert("Network error: " + error.message);
@@ -366,15 +517,98 @@
         }
     }
 
+    function handleSearchInput() {
+        const val = document.getElementById('filterSearch').value;
+        const clearBtn = document.getElementById('clearSearchBtn');
+        if (clearBtn) {
+            clearBtn.classList.toggle('d-none', !val);
+        }
+        applyFilters();
+    }
+
+    function handleSearchKey(event) {
+        if (event.key === 'Escape') {
+            clearSearch();
+        }
+    }
+
+    function clearSearch() {
+        const input = document.getElementById('filterSearch');
+        if (input) {
+            input.value = '';
+            input.focus();
+        }
+        const clearBtn = document.getElementById('clearSearchBtn');
+        if (clearBtn) clearBtn.classList.add('d-none');
+        const matchBadge = document.getElementById('searchMatchCount');
+        if (matchBadge) matchBadge.classList.add('d-none');
+        applyFilters();
+    }
+
+    function selectStatusPill(status) {
+        document.getElementById('filterStatus').value = status;
+        document.querySelectorAll('.status-pill').forEach(btn => {
+            const btnStatus = btn.getAttribute('data-status');
+            if (btnStatus === status) {
+                btn.className = 'btn btn-sm rounded-pill px-3 py-1 fw-semibold status-pill btn-primary shadow-sm';
+            } else {
+                btn.className = 'btn btn-sm rounded-pill px-3 py-1 fw-semibold status-pill btn-outline-secondary';
+            }
+        });
+        applyFilters();
+    }
+
+    function updateStatusPillCounts() {
+        if (!allInvoices) return;
+        const countAll = allInvoices.length;
+        const countAwaiting = allInvoices.filter(inv => inv.status === 'Awaiting Payment').length;
+        const countPaid = allInvoices.filter(inv => inv.status === 'Paid').length;
+        const countOverdue = allInvoices.filter(inv => inv.status === 'Overdue').length;
+        const countVoid = allInvoices.filter(inv => inv.status === 'Void').length;
+
+        const elAll = document.getElementById('countAll');
+        const elAwaiting = document.getElementById('countAwaiting');
+        const elPaid = document.getElementById('countPaid');
+        const elOverdue = document.getElementById('countOverdue');
+        const elVoid = document.getElementById('countVoid');
+
+        if (elAll) elAll.textContent = countAll;
+        if (elAwaiting) elAwaiting.textContent = countAwaiting;
+        if (elPaid) elPaid.textContent = countPaid;
+        if (elOverdue) elOverdue.textContent = countOverdue;
+        if (elVoid) elVoid.textContent = countVoid;
+    }
+
     function applyFilters() {
         const statusFilter = document.getElementById('filterStatus').value;
         const typeFilter = document.getElementById('filterType').value;
-        const searchFilter = document.getElementById('filterSearch').value.toLowerCase().trim();
+        const searchInput = document.getElementById('filterSearch');
+        const searchFilter = (searchInput ? searchInput.value : '').toLowerCase().trim();
         
         const minAmountVal = document.getElementById('filterMin').value;
         const maxAmountVal = document.getElementById('filterMax').value;
         const minAmount = minAmountVal ? parseFloat(minAmountVal) : null;
         const maxAmount = maxAmountVal ? parseFloat(maxAmountVal) : null;
+
+        // Active filters count
+        let activeCount = 0;
+        if (typeFilter !== 'all') activeCount++;
+        if (minAmount !== null || maxAmount !== null) activeCount++;
+        const activeBadge = document.getElementById('activeFiltersBadge');
+        if (activeBadge) {
+            if (activeCount > 0) {
+                activeBadge.textContent = activeCount;
+                activeBadge.classList.remove('d-none');
+            } else {
+                activeBadge.classList.add('d-none');
+            }
+        }
+
+        const hasAnyFilter = statusFilter !== 'all' || typeFilter !== 'all' || searchFilter || minAmount !== null || maxAmount !== null;
+        const resetBtn = document.getElementById('resetAllBtn');
+        if (resetBtn) {
+            resetBtn.classList.toggle('d-none', !hasAnyFilter);
+        }
         
         const filtered = allInvoices.filter(invoice => {
             // 1. Status filter
@@ -396,7 +630,7 @@
                 if (maxAmount !== null && total > maxAmount) return false;
             }
             
-            // 4. Search filter (ID, Number, Company, Contact, Item Description)
+            // 4. Search filter (ID, Number, Company, Contact, Email, Phone, Address, Line Items)
             if (searchFilter) {
                 const matchId = String(invoice.invoice_id).toLowerCase().includes(searchFilter);
                 const matchNum = String(invoice.invoice_number || '').toLowerCase().includes(searchFilter);
@@ -405,10 +639,11 @@
                 const matchEmail = String(invoice.contact_email || '').toLowerCase().includes(searchFilter);
                 const matchPhone = String(invoice.contact_phone || '').toLowerCase().includes(searchFilter);
                 const matchAddress = invoice.billing_address ? 
-                    `${invoice.billing_address.address_line1 || ''} ${invoice.billing_address.city || ''} ${invoice.billing_address.postal_code || ''}`.toLowerCase().includes(searchFilter) : false;
+                    `${invoice.billing_address.address_line1 || ''} ${invoice.billing_address.city || ''} ${invoice.billing_address.region || ''} ${invoice.billing_address.postal_code || ''}`.toLowerCase().includes(searchFilter) : false;
                 const matchItems = invoice.items.some(item => 
                     String(item.description || '').toLowerCase().includes(searchFilter) || 
-                    String(item.account || '').toLowerCase().includes(searchFilter)
+                    String(item.account || '').toLowerCase().includes(searchFilter) ||
+                    String(item.type || '').toLowerCase().includes(searchFilter)
                 );
                 
                 if (!matchId && !matchNum && !matchCompany && !matchContact && !matchEmail && !matchPhone && !matchAddress && !matchItems) {
@@ -418,6 +653,17 @@
             
             return true;
         });
+
+        // Search match count badge
+        const matchBadge = document.getElementById('searchMatchCount');
+        if (matchBadge) {
+            if (searchFilter) {
+                matchBadge.textContent = `${filtered.length} found`;
+                matchBadge.classList.remove('d-none');
+            } else {
+                matchBadge.classList.add('d-none');
+            }
+        }
         
         renderInvoices(filtered, allInvoices.length);
     }
@@ -592,7 +838,13 @@
         document.getElementById('filterSearch').value = '';
         document.getElementById('filterMin').value = '';
         document.getElementById('filterMax').value = '';
-        applyFilters();
+
+        const clearBtn = document.getElementById('clearSearchBtn');
+        if (clearBtn) clearBtn.classList.add('d-none');
+        const matchBadge = document.getElementById('searchMatchCount');
+        if (matchBadge) matchBadge.classList.add('d-none');
+
+        selectStatusPill('all');
     }
 
     async function checkXeroStatus() {
@@ -686,8 +938,20 @@
         // 2. Actively check Xero connection status
         checkXeroStatus();
 
-        // 3. Load default data
-        setMode('mock');
+        // 3. Global keyboard shortcut: press / to focus search
+        document.addEventListener('keydown', (e) => {
+            if (e.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) {
+                e.preventDefault();
+                const searchInput = document.getElementById('filterSearch');
+                if (searchInput) {
+                    searchInput.focus();
+                    searchInput.select();
+                }
+            }
+        });
+
+        // 4. Load default data (mock if available, else live)
+        setMode(hasMockData ? 'mock' : 'live');
     });
 </script>
 {% endblock %}

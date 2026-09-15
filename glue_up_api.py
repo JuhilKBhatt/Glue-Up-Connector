@@ -1,4 +1,5 @@
 import os
+import json
 import requests
 import time
 import hmac
@@ -222,366 +223,67 @@ class GlueUpAPI:
             print(msg)
             return False, msg
 
+    @classmethod
+    def get_mock_file_path(cls):
+        """Returns the path to mock_invoices.json if configured or present on disk."""
+        env_path = os.environ.get("MOCK_INVOICES_FILE")
+        if env_path and os.path.exists(env_path):
+            return env_path
+            
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        candidates = [
+            os.path.join(base_dir, "mock_invoices.json"),
+            os.path.join(base_dir, "data", "mock_invoices.json"),
+            "mock_invoices.json"
+        ]
+        for path in candidates:
+            if os.path.exists(path):
+                return path
+        return None
+
+    def has_mock_data(self):
+        """
+        Checks whether the mockup data JSON file exists on disk.
+        If it does not exist, the system assumes a production environment.
+        """
+        return bool(self.get_mock_file_path())
+
     def get_mock_invoices(self):
         """
-        Generates realistic mockup invoices modeled directly from real Glue Up API payloads,
-        AJBCC events, members, and ticket types. Useful for testing UI, filters, and Xero sync
-        without waiting for slow live API calls or modifying production accounting.
+        Loads realistic mockup invoices from the mock_invoices.json file.
+        If the file does not exist, returns an empty list (assuming production).
+        Dynamically calculates relative dates if offset fields are provided.
         """
+        file_path = self.get_mock_file_path()
+        if not file_path:
+            return []
+
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                mock_data = json.load(f)
+        except Exception as e:
+            print(f"Error reading mock invoices file {file_path}: {e}")
+            return []
+
         now = datetime.now()
-        
-        # Calculate dynamic dates relative to today
         def offset_ms(days_delta):
             return int((now + timedelta(days=days_delta)).timestamp() * 1000)
 
-        mock_data = [
-            {
-                "id": 12836418,
-                "number": "MEM002041",
-                "organizationId": 5424,
-                "title": "AJBCC Tax Invoice",
-                "currency": "AUD",
-                "faceTotal": 11715.0,
-                "balanceDue": 11715.0,
-                "proforma": False,
-                "voided": False,
-                "createdOn": offset_ms(-2),
-                "issueDate": offset_ms(-2),
-                "dueDate": offset_ms(28),
-                "purchaserGivenName": "Anne-Marie",
-                "purchaserFamilyName": "Johnson",
-                "purchaserEmail": "membership@ajbcc.com.au",
-                "purchaserPhone": "+61 2 6230 5600",
-                "purchaserCompanyName": "Australia Japan Business Co-operation Committee Limited",
-                "purchaserAddress": "Level 3, 10-12 Brisbane Avenue",
-                "purchaserCity": "Barton",
-                "purchaserState": "ACT",
-                "purchaserPostalCode": "2600",
-                "purchaserCountry": "Australia",
-                "origin": "MembershipApplication",
-                "status": "Unpaid",
-                "items": [
-                    {
-                        "id": 14444043,
-                        "organizationId": 5424,
-                        "invoiceId": 12836418,
-                        "name": "Membership Application - Ordinary",
-                        "status": "Valid",
-                        "type": "MembershipApplication",
-                        "description": "Membership Application (Nominated Representative)",
-                        "paidStatus": "Unpaid",
-                        "faceValue": 3630.0,
-                        "quantity": 1.0,
-                        "createdOn": offset_ms(-2)
-                    },
-                    {
-                        "id": 14444044,
-                        "organizationId": 5424,
-                        "invoiceId": 12836418,
-                        "name": "Additional Member Package",
-                        "status": "Valid",
-                        "type": "AdditionalMember",
-                        "description": "Additional Member (3 Representatives)",
-                        "paidStatus": "Unpaid",
-                        "faceValue": 8085.0,
-                        "quantity": 3.0,
-                        "createdOn": offset_ms(-2)
-                    }
-                ],
-                "contacts": [
-                    {
-                        "id": 1002196,
-                        "givenName": "Anne-Marie",
-                        "familyName": "Johnson",
-                        "emailAddress": {"value": "membership@ajbcc.com.au"},
-                        "phone": "+61 2 6230 5600",
-                        "companyName": "Australia Japan Business Co-operation Committee Limited"
-                    }
-                ]
-            },
-            {
-                "id": 12790728,
-                "number": "MEM002038",
-                "organizationId": 5424,
-                "title": "AJBCC Tax Invoice",
-                "currency": "AUD",
-                "faceTotal": 11990.0,
-                "balanceDue": 0.0,
-                "proforma": False,
-                "voided": False,
-                "createdOn": offset_ms(-8),
-                "issueDate": offset_ms(-8),
-                "dueDate": offset_ms(22),
-                "purchaserGivenName": "Richard",
-                "purchaserFamilyName": "Andrews",
-                "purchaserEmail": "richard.andrews@ajbcc.com.au",
-                "purchaserPhone": "+61 2 9230 4000",
-                "purchaserCompanyName": "Allens",
-                "purchaserAddress": "Deutsche Bank Place, 126 Phillip Street",
-                "purchaserCity": "Sydney",
-                "purchaserState": "NSW",
-                "purchaserPostalCode": "2000",
-                "purchaserCountry": "Australia",
-                "origin": "MembershipRenewal",
-                "status": "Paid",
-                "items": [
-                    {
-                        "id": 14138769,
-                        "organizationId": 5424,
-                        "invoiceId": 12790728,
-                        "name": "Annual Corporate Membership Renewal",
-                        "status": "Valid",
-                        "type": "MembershipApplication",
-                        "description": "Membership Application - Corporate Tier",
-                        "paidStatus": "Paid",
-                        "faceValue": 6710.0,
-                        "quantity": 1.0,
-                        "createdOn": offset_ms(-8)
-                    },
-                    {
-                        "id": 14138770,
-                        "organizationId": 5424,
-                        "invoiceId": 12790728,
-                        "name": "Additional Corporate Members",
-                        "status": "Valid",
-                        "type": "AdditionalMember",
-                        "description": "Additional Member Subscriptions",
-                        "paidStatus": "Paid",
-                        "faceValue": 5280.0,
-                        "quantity": 2.0,
-                        "createdOn": offset_ms(-8)
-                    }
-                ],
-                "contacts": [
-                    {
-                        "id": 1002197,
-                        "givenName": "Richard",
-                        "familyName": "Andrews",
-                        "emailAddress": {"value": "richard.andrews@ajbcc.com.au"},
-                        "phone": "+61 2 9230 4000",
-                        "companyName": "Allens"
-                    }
-                ]
-            },
-            {
-                "id": 12769018,
-                "number": "EV000035",
-                "organizationId": 5424,
-                "title": "AJBCC Event Invoice",
-                "currency": "AUD",
-                "faceTotal": 880.0,
-                "balanceDue": 880.0,
-                "proforma": False,
-                "voided": False,
-                "createdOn": offset_ms(-35),
-                "issueDate": offset_ms(-35),
-                "dueDate": offset_ms(-5),  # Past due -> Overdue
-                "purchaserGivenName": "Tim",
-                "purchaserFamilyName": "Lester",
-                "purchaserEmail": "tim.lester@jamesonboyce.com.au",
-                "purchaserPhone": "+61 3 9614 7722",
-                "purchaserCompanyName": "Jameson Boyce Partners",
-                "purchaserAddress": "Level 15, 333 Collins Street",
-                "purchaserCity": "Melbourne",
-                "purchaserState": "VIC",
-                "purchaserPostalCode": "3000",
-                "purchaserCountry": "Australia",
-                "origin": "EventTicket",
-                "status": "Unpaid",
-                "items": [
-                    {
-                        "id": 9165711,
-                        "organizationId": 5424,
-                        "invoiceId": 12769018,
-                        "name": "The 63rd Annual Australia–Japan Joint Business Conference",
-                        "status": "Valid",
-                        "type": "EventTicket",
-                        "description": "Delegate Ticket: 63rd Annual Joint Business Conference",
-                        "paidStatus": "Unpaid",
-                        "faceValue": 880.0,
-                        "quantity": 1.0,
-                        "createdOn": offset_ms(-35)
-                    }
-                ],
-                "contacts": [
-                    {
-                        "id": 1002330,
-                        "givenName": "Tim",
-                        "familyName": "Lester",
-                        "emailAddress": {"value": "tim.lester@jamesonboyce.com.au"},
-                        "phone": "+61 3 9614 7722",
-                        "companyName": "Jameson Boyce Partners"
-                    }
-                ]
-            },
-            {
-                "id": 12812473,
-                "number": "MEM002042",
-                "organizationId": 5424,
-                "title": "AJBCC Tax Invoice",
-                "currency": "AUD",
-                "faceTotal": 9020.0,
-                "balanceDue": 9020.0,
-                "proforma": False,
-                "voided": False,
-                "createdOn": offset_ms(-4),
-                "issueDate": offset_ms(-4),
-                "dueDate": offset_ms(26),
-                "purchaserGivenName": "Heidi",
-                "purchaserFamilyName": "Han",
-                "purchaserEmail": "heidi.han@ebest.com.au",
-                "purchaserPhone": "+61 2 8317 1234",
-                "purchaserCompanyName": "eBest Pty Ltd",
-                "purchaserAddress": "Suite 401, 55 Clarence Street",
-                "purchaserCity": "Sydney",
-                "purchaserState": "NSW",
-                "purchaserPostalCode": "2000",
-                "purchaserCountry": "Australia",
-                "origin": "MembershipApplication",
-                "status": "Unpaid",
-                "items": [
-                    {
-                        "id": 14444050,
-                        "organizationId": 5424,
-                        "invoiceId": 12812473,
-                        "name": "Membership Application - Ordinary",
-                        "status": "Valid",
-                        "type": "MembershipApplication",
-                        "description": "Membership Application (Nominated Representative)",
-                        "paidStatus": "Unpaid",
-                        "faceValue": 3630.0,
-                        "quantity": 1.0,
-                        "createdOn": offset_ms(-4)
-                    },
-                    {
-                        "id": 14444051,
-                        "organizationId": 5424,
-                        "invoiceId": 12812473,
-                        "name": "Additional Member (2 Representatives)",
-                        "status": "Valid",
-                        "type": "AdditionalMember",
-                        "description": "Additional Member",
-                        "paidStatus": "Unpaid",
-                        "faceValue": 5390.0,
-                        "quantity": 2.0,
-                        "createdOn": offset_ms(-4)
-                    }
-                ],
-                "contacts": [
-                    {
-                        "id": 1002331,
-                        "givenName": "Heidi",
-                        "familyName": "Han",
-                        "emailAddress": {"value": "heidi.han@ebest.com.au"},
-                        "phone": "+61 2 8317 1234",
-                        "companyName": "eBest Pty Ltd"
-                    }
-                ]
-            },
-            {
-                "id": 12780507,
-                "number": "CUST000109",
-                "organizationId": 5424,
-                "title": "AJBCC Custom Invoice",
-                "currency": "AUD",
-                "faceTotal": 2200.0,
-                "balanceDue": 2200.0,
-                "proforma": False,
-                "voided": False,
-                "createdOn": offset_ms(-1),
-                "issueDate": offset_ms(-1),
-                "dueDate": offset_ms(14),
-                "purchaserGivenName": "Samantha",
-                "purchaserFamilyName": "Taylor",
-                "purchaserEmail": "samantha.taylor@vic.gov.au",
-                "purchaserPhone": "+61 3 9651 9999",
-                "purchaserCompanyName": "Victorian Government",
-                "purchaserAddress": "121 Exhibition Street",
-                "purchaserCity": "Melbourne",
-                "purchaserState": "VIC",
-                "purchaserPostalCode": "3000",
-                "purchaserCountry": "Australia",
-                "origin": "Custom",
-                "status": "Draft",
-                "items": [
-                    {
-                        "id": 10636032,
-                        "organizationId": 5424,
-                        "invoiceId": 12780507,
-                        "name": "Chiba Sake Festival 2026 Sponsorship",
-                        "status": "Valid",
-                        "type": "Custom",
-                        "description": "Major Sponsor Package - Chiba Sake Festival 2026",
-                        "paidStatus": "Unpaid",
-                        "faceValue": 2200.0,
-                        "quantity": 1.0,
-                        "createdOn": offset_ms(-1)
-                    }
-                ],
-                "contacts": [
-                    {
-                        "id": 1000037,
-                        "givenName": "Samantha",
-                        "familyName": "Taylor",
-                        "emailAddress": {"value": "samantha.taylor@vic.gov.au"},
-                        "phone": "+61 3 9651 9999",
-                        "companyName": "Victorian Government"
-                    }
-                ]
-            },
-            {
-                "id": 12769138,
-                "number": "EV000012",
-                "organizationId": 5424,
-                "title": "AJBCC Tax Invoice",
-                "currency": "AUD",
-                "faceTotal": 150.0,
-                "balanceDue": 150.0,
-                "proforma": False,
-                "voided": True,
-                "voidReason": "Duplicate ticket booking by member",
-                "createdOn": offset_ms(-10),
-                "issueDate": offset_ms(-10),
-                "dueDate": offset_ms(20),
-                "purchaserGivenName": "David",
-                "purchaserFamilyName": "Clark",
-                "purchaserEmail": "david.clark@gtlaw.com.au",
-                "purchaserPhone": "+61 2 9263 4000",
-                "purchaserCompanyName": "Gilbert + Tobin",
-                "purchaserAddress": "Tower Two, International Towers, 200 Barangaroo Avenue",
-                "purchaserCity": "Barangaroo",
-                "purchaserState": "NSW",
-                "purchaserPostalCode": "2000",
-                "purchaserCountry": "Australia",
-                "origin": "EventTicket",
-                "status": "Voided",
-                "items": [
-                    {
-                        "id": 9165722,
-                        "organizationId": 5424,
-                        "invoiceId": 12769138,
-                        "name": "Future Leaders Forum 2026 Ticket",
-                        "status": "Voided",
-                        "type": "EventTicket",
-                        "description": "Forum Ticket - Cancelled",
-                        "paidStatus": "Unpaid",
-                        "faceValue": 150.0,
-                        "quantity": 1.0,
-                        "createdOn": offset_ms(-10)
-                    }
-                ],
-                "contacts": [
-                    {
-                        "id": 1002340,
-                        "givenName": "David",
-                        "familyName": "Clark",
-                        "emailAddress": {"value": "david.clark@gtlaw.com.au"},
-                        "phone": "+61 2 9263 4000",
-                        "companyName": "Gilbert + Tobin"
-                    }
-                ]
-            }
-        ]
+        # Refresh dates dynamically if offset fields exist
+        for inv in mock_data:
+            if 'issueDateOffsetDays' in inv:
+                inv['issueDate'] = offset_ms(inv['issueDateOffsetDays'])
+            if 'createdOnOffsetDays' in inv:
+                inv['createdOn'] = offset_ms(inv['createdOnOffsetDays'])
+            if 'dueDateOffsetDays' in inv:
+                inv['dueDate'] = offset_ms(inv['dueDateOffsetDays'])
+            if 'items' in inv:
+                for item in inv['items']:
+                    if 'createdOnOffsetDays' in item:
+                        item['createdOn'] = offset_ms(item['createdOnOffsetDays'])
+                    elif 'issueDateOffsetDays' in inv:
+                        item['createdOn'] = offset_ms(inv['issueDateOffsetDays'])
+
         return mock_data
 
 if __name__ == "__main__":

@@ -206,6 +206,11 @@ def get_mock_invoices_route():
     """Returns mock invoices generated directly from Glue Up API models."""
     try:
         api = GlueUpAPI()
+        if not api.has_mock_data():
+            return jsonify({
+                "status": "error",
+                "message": "Mock data file (mock_invoices.json) not found. System is running in production mode."
+            }), 404
         raw_mock = api.get_mock_invoices()
         processed = [format_glueup_invoice(inv) for inv in raw_mock]
         return jsonify({
@@ -221,9 +226,13 @@ def get_mock_invoices_route():
 def fetch_invoices():
     try:
         api = GlueUpAPI()
+        has_mock = api.has_mock_data()
         
-        # Source can be 'mock' or 'live' (defaults to 'mock' for fast, reliable testing)
-        source = request.args.get('source', 'mock')
+        # Source defaults to 'mock' if mock data exists, otherwise 'live' (production)
+        default_source = 'mock' if has_mock else 'live'
+        source = request.args.get('source', default_source)
+        if source == 'mock' and not has_mock:
+            source = 'live'
         
         today = datetime.now()
         first_of_month = today.replace(day=1).strftime("%Y-%m-%d")
@@ -307,5 +316,6 @@ def fetch_invoices():
 @invoice_bp.route('/invoices', methods=['GET'])
 def show_invoices():
     """Shows the invoices page UI"""
-    return render_template("invoices.html")
+    api = GlueUpAPI()
+    return render_template("invoices.html", has_mock_data=api.has_mock_data())
 
