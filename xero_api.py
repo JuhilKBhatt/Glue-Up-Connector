@@ -335,7 +335,7 @@ def sync_invoice():
 
         from datetime import datetime
         from xero_python.accounting import (
-            Invoices, Invoice, LineItem, Contact, Address, Phone,
+            Invoices, Invoice, LineItem, Contact, Contacts, Address, Phone,
             LineAmountTypes, Payment, Account, Accounts
         )
 
@@ -516,14 +516,10 @@ def sync_invoice():
             )
 
             try:
-                if contact_email:
-                    safe_email = contact_email.replace('"', '\\"')
-                    where_clause = f'EmailAddress=="{safe_email}"'
-                else:
-                    safe_name = contact_display_name.replace('"', '\\"')
-                    where_clause = f'Name=="{safe_name}"'
+                safe_name = contact_display_name.replace('"', '\\"')
+                where_clause = f'Name=="{safe_name}"'
                     
-                print(f"[XERO SYNC] Looking up contact with {where_clause}...", flush=True)
+                print(f"[XERO SYNC] Looking up contact by Name: {where_clause}...", flush=True)
                 existing_contacts = accounting_api.get_contacts(
                     xero_tenant_id=xero_tenant_id,
                     where=where_clause
@@ -545,7 +541,7 @@ def sync_invoice():
                         accounting_api.update_contact(
                             xero_tenant_id=xero_tenant_id,
                             contact_id=c_id,
-                            contacts={"contacts": [update_payload]}
+                            contacts=Contacts(contacts=[update_payload])
                         )
                         print(f"[XERO SYNC] Successfully updated existing contact {c_id} with billing details in Xero.", flush=True)
                     except Exception as upd_err:
@@ -561,24 +557,24 @@ def sync_invoice():
                         phones=phones_list if phones_list else None
                     )
                 else:
-                    print(f"[XERO SYNC] Creating new contact: {contact_display_name} with full billing details...", flush=True)
-                    new_contact_payload = Contact(
-                        name=contact_display_name,
-                        first_name=first_name or None,
-                        last_name=last_name or None,
-                        email_address=contact_email or None,
-                        addresses=addresses_list if addresses_list else None,
-                        phones=phones_list if phones_list else None
-                    )
-                    new_contact = accounting_api.create_contacts(
-                        xero_tenant_id=xero_tenant_id,
-                        contacts={"contacts": [new_contact_payload]}
-                    )
-                    if new_contact and new_contact.contacts:
-                        c_res = new_contact.contacts[0]
-                        if c_res.contact_id:
+                    print(f"[XERO SYNC] Contact '{contact_display_name}' not found by Name. Creating new contact...", flush=True)
+                    try:
+                        new_contact_payload = Contact(
+                            name=contact_display_name,
+                            first_name=first_name or None,
+                            last_name=last_name or None,
+                            email_address=contact_email or None,
+                            addresses=addresses_list if addresses_list else None,
+                            phones=phones_list if phones_list else None
+                        )
+                        new_contact = accounting_api.create_contacts(
+                            xero_tenant_id=xero_tenant_id,
+                            contacts=Contacts(contacts=[new_contact_payload])
+                        )
+                        if new_contact and new_contact.contacts and new_contact.contacts[0].contact_id:
+                            c_id = new_contact.contacts[0].contact_id
                             contact_obj = Contact(
-                                contact_id=c_res.contact_id,
+                                contact_id=c_id,
                                 name=contact_display_name,
                                 first_name=first_name or None,
                                 last_name=last_name or None,
@@ -586,7 +582,26 @@ def sync_invoice():
                                 addresses=addresses_list if addresses_list else None,
                                 phones=phones_list if phones_list else None
                             )
-                            print(f"[XERO SYNC] Created contact with ID: {c_res.contact_id}", flush=True)
+                            print(f"[XERO SYNC] Created contact with ID: {c_id}", flush=True)
+                        else:
+                            contact_obj = Contact(
+                                name=contact_display_name,
+                                first_name=first_name or None,
+                                last_name=last_name or None,
+                                email_address=contact_email or None,
+                                addresses=addresses_list if addresses_list else None,
+                                phones=phones_list if phones_list else None
+                            )
+                    except Exception as create_err:
+                        print(f"[XERO SYNC] Note: Pre-creating contact failed ({create_err}). Letting Xero resolve by name.", flush=True)
+                        contact_obj = Contact(
+                            name=contact_display_name,
+                            first_name=first_name or None,
+                            last_name=last_name or None,
+                            email_address=contact_email or None,
+                            addresses=addresses_list if addresses_list else None,
+                            phones=phones_list if phones_list else None
+                        )
             except Exception as c_err:
                 print(f"[XERO SYNC] Warning during contact query/create: {c_err}", flush=True)
                 contact_obj = Contact(
@@ -712,6 +727,16 @@ def sync_invoice():
                     clearing_id = get_clearing_account_id()
                     pay_info = invoice_data.get('payment') or {}
                     pay_amount = float(pay_info.get('amount') or sum(float(item.get('amount', 0)) for item in invoice_data.get('items', [])))
+                    
+                    # Cap payment at amount due in Xero to prevent "Payment amount exceeds amount outstanding"
+                    ex_due = getattr(existing_inv, 'amount_due', None)
+                    if ex_due is not None:
+                        ex_due_val = float(ex_due)
+                        if ex_due_val <= 0.001:
+                            print(f"[XERO SYNC] Invoice #{ex_num} is already fully paid in Xero (AmountDue: 0).", flush=True)
+                            return True, f"Invoice #{ex_num} updated in Xero with latest Glue Up details and is fully PAID!", ex_id, ex_num, "PAID", xero_url
+                        pay_amount = min(pay_amount, ex_due_val)
+
                     pay_date_str = pay_info.get('date') or invoice_data.get('payment_completion_date') or raw_date
                     try:
                         parsed_pay_date = datetime.strptime(pay_date_str, "%Y-%m-%d")
@@ -724,7 +749,7 @@ def sync_invoice():
                             payment = Payment(
                                 invoice=Invoice(invoice_id=ex_id),
                                 account=Account(account_id=clearing_id),
-                                amount=pay_amount,
+                                amount=round(pay_amount, 2),
                                 date=parsed_pay_date,
                                 reference=f"GlueUp {pay_ref}".strip()
                             )
@@ -829,6 +854,14 @@ def sync_invoice():
                 clearing_id = get_clearing_account_id()
                 pay_info = invoice_data.get('payment') or {}
                 pay_amount = float(pay_info.get('amount') or sum(float(item.get('amount', 0)) for item in invoice_data.get('items', [])))
+                
+                # Cap payment at amount due or total of the newly created invoice
+                res_due = getattr(xero_res, 'amount_due', None) or getattr(xero_res, 'total', None)
+                if res_due is not None:
+                    res_due_val = float(res_due)
+                    if res_due_val > 0:
+                        pay_amount = min(pay_amount, res_due_val)
+
                 pay_date_str = pay_info.get('date') or invoice_data.get('payment_completion_date') or raw_date
                 try:
                     parsed_pay_date = datetime.strptime(pay_date_str, "%Y-%m-%d")
@@ -841,7 +874,7 @@ def sync_invoice():
                         payment = Payment(
                             invoice=Invoice(invoice_id=new_id),
                             account=Account(account_id=clearing_id),
-                            amount=pay_amount,
+                            amount=round(pay_amount, 2),
                             date=parsed_pay_date,
                             reference=f"GlueUp {pay_ref}".strip()
                         )

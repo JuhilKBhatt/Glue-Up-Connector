@@ -54,79 +54,116 @@ def format_glueup_invoice(payload):
         invoice_status = 'Awaiting Payment'
 
     # 4. Purchaser, Company & Contact extraction
-    company_name = payload.get('purchaserCompanyName')
-    if not company_name:
-        comp_obj = payload.get('company')
-        if isinstance(comp_obj, dict):
-            company_name = comp_obj.get('name')
-        elif isinstance(comp_obj, str):
-            company_name = comp_obj
-
-    purchaser_given = payload.get('purchaserGivenName', '') or ''
-    purchaser_family = payload.get('purchaserFamilyName', '') or ''
-    contact_name = f"{purchaser_given} {purchaser_family}".strip() or None
-    contact_email = payload.get('purchaserEmail')
-    contact_phone = payload.get('purchaserPhone') or payload.get('phone')
-
-    # Billing Address extraction
-    address_line1 = payload.get('purchaserAddress') or payload.get('address') or ''
-    address_line2 = payload.get('purchaserAddressLine2') or ''
-    city = payload.get('purchaserCity') or payload.get('city') or ''
-    region = payload.get('purchaserState') or payload.get('state') or payload.get('region') or ''
-    postal_code = payload.get('purchaserPostalCode') or payload.get('postalCode') or payload.get('zip') or ''
-    country = payload.get('purchaserCountry') or payload.get('country') or 'Australia'
-
-    if isinstance(address_line1, dict):
-        addr_dict = address_line1
-        address_line1 = addr_dict.get('line1') or addr_dict.get('street') or ''
-        address_line2 = addr_dict.get('line2') or ''
-        city = addr_dict.get('city') or ''
-        region = addr_dict.get('region') or addr_dict.get('state') or ''
-        postal_code = addr_dict.get('postalCode') or addr_dict.get('postal_code') or addr_dict.get('zip') or ''
-        country = addr_dict.get('country') or 'Australia'
-
-    # Fallback to contacts array if top-level purchaser fields missing
+    comp_obj = payload.get('company') if isinstance(payload.get('company'), dict) else {}
     contacts_list = payload.get('contacts', [])
-    if contacts_list and len(contacts_list) > 0:
-        first_contact = contacts_list[0]
-        if not purchaser_given:
-            purchaser_given = first_contact.get('givenName', '') or ''
-        if not purchaser_family:
-            purchaser_family = first_contact.get('familyName', '') or ''
-        if not contact_name:
-            contact_name = f"{purchaser_given} {purchaser_family}".strip() or None
-        if not contact_email:
-            email_field = first_contact.get('emailAddress')
-            if isinstance(email_field, dict):
-                contact_email = email_field.get('value')
-            elif isinstance(email_field, str):
-                contact_email = email_field
-        if not contact_phone:
-            contact_phone = first_contact.get('phone') or first_contact.get('workPhone') or first_contact.get('mobilePhone')
-        if not company_name:
-            company_name = first_contact.get('companyName')
-        if not address_line1:
-            c_addr = first_contact.get('address') or first_contact.get('postalAddress')
-            if isinstance(c_addr, dict):
-                address_line1 = c_addr.get('line1') or c_addr.get('street') or ''
-                address_line2 = c_addr.get('line2') or ''
-                city = c_addr.get('city') or city
-                region = c_addr.get('region') or c_addr.get('state') or region
-                postal_code = c_addr.get('postalCode') or c_addr.get('postal_code') or postal_code
-                country = c_addr.get('country') or country
-            elif isinstance(c_addr, str):
-                address_line1 = c_addr
+    first_contact = contacts_list[0] if (contacts_list and isinstance(contacts_list[0], dict)) else {}
+
+    company_name = (
+        payload.get('purchaserCompanyName') or 
+        comp_obj.get('name') or 
+        first_contact.get('companyName') or 
+        None
+    )
+
+    purchaser_given = (
+        payload.get('purchaserGivenName') or 
+        first_contact.get('givenName', '') or 
+        ''
+    )
+    purchaser_family = (
+        payload.get('purchaserFamilyName') or 
+        first_contact.get('familyName', '') or 
+        ''
+    )
+    contact_name = f"{purchaser_given} {purchaser_family}".strip() or None
+
+    email_field = (
+        payload.get('purchaserEmail') or 
+        first_contact.get('emailAddress') or 
+        first_contact.get('email') or 
+        comp_obj.get('email')
+    )
+    if isinstance(email_field, dict):
+        contact_email = email_field.get('value')
+    elif isinstance(email_field, str):
+        contact_email = email_field.strip() or None
+    else:
+        contact_email = None
+
+    contact_phone = (
+        payload.get('purchaserPhone') or 
+        payload.get('phone') or 
+        first_contact.get('phone') or 
+        first_contact.get('workPhone') or 
+        first_contact.get('mobilePhone') or 
+        comp_obj.get('phone') or 
+        None
+    )
 
     if not company_name:
         company_name = contact_name or "AJBCC Member Organization"
 
+    # Billing Address extraction (handles mock data, top-level, company dict, and contacts array)
+    raw_addr = payload.get('purchaserAddress') or payload.get('address') or ''
+    addr_dict = raw_addr if isinstance(raw_addr, dict) else {}
+    c_addr = first_contact.get('address') if isinstance(first_contact.get('address'), dict) else {}
+
+    address_line1 = (
+        (raw_addr if isinstance(raw_addr, str) and raw_addr.strip() else '') or
+        addr_dict.get('line1') or addr_dict.get('street') or addr_dict.get('streetAddress') or
+        comp_obj.get('billingStreetAddress') or comp_obj.get('streetAddress') or
+        first_contact.get('billingStreetAddress') or first_contact.get('streetAddress') or
+        c_addr.get('line1') or c_addr.get('street') or ''
+    )
+    address_line2 = (
+        payload.get('purchaserAddressLine2') or
+        addr_dict.get('line2') or
+        comp_obj.get('streetAddress2') or
+        first_contact.get('streetAddress2') or
+        c_addr.get('line2') or ''
+    )
+    city = (
+        payload.get('purchaserCity') or
+        addr_dict.get('city') or
+        comp_obj.get('billingCity') or comp_obj.get('cityNameText') or comp_obj.get('city') or
+        first_contact.get('billingCity') or first_contact.get('cityNameText') or first_contact.get('city') or
+        c_addr.get('city') or ''
+    )
+    region = (
+        payload.get('purchaserState') or payload.get('state') or payload.get('region') or
+        addr_dict.get('region') or addr_dict.get('state') or
+        comp_obj.get('billingState') or comp_obj.get('state') or comp_obj.get('region') or
+        first_contact.get('billingState') or first_contact.get('state') or first_contact.get('region') or
+        c_addr.get('region') or c_addr.get('state') or ''
+    )
+    postal_code = (
+        payload.get('purchaserPostalCode') or payload.get('postalCode') or payload.get('zip') or
+        addr_dict.get('postalCode') or addr_dict.get('postal_code') or addr_dict.get('zip') or
+        comp_obj.get('billingZipCode') or comp_obj.get('zipCode') or
+        first_contact.get('billingZipCode') or first_contact.get('zipCode') or
+        c_addr.get('postalCode') or c_addr.get('zip') or ''
+    )
+    raw_country = (
+        payload.get('purchaserCountry') or payload.get('country') or
+        addr_dict.get('country') or
+        comp_obj.get('billingCountry') or comp_obj.get('country') or comp_obj.get('countryCode') or
+        first_contact.get('billingCountry') or first_contact.get('country') or first_contact.get('countryCode') or
+        c_addr.get('country') or 'Australia'
+    )
+    COUNTRY_MAP = {
+        'AU': 'Australia', 'JP': 'Japan', 'US': 'United States',
+        'NZ': 'New Zealand', 'GB': 'United Kingdom', 'UK': 'United Kingdom',
+        'CN': 'China', 'SG': 'Singapore'
+    }
+    country = COUNTRY_MAP.get(str(raw_country).strip().upper(), str(raw_country).strip() or 'Australia')
+
     billing_address = {
-        "address_line1": address_line1,
-        "address_line2": address_line2,
-        "city": city,
-        "region": region,
-        "postal_code": postal_code,
-        "country": country,
+        "address_line1": address_line1.strip(),
+        "address_line2": address_line2.strip(),
+        "city": city.strip(),
+        "region": region.strip(),
+        "postal_code": postal_code.strip(),
+        "country": country.strip(),
         "attention_to": contact_name or company_name
     }
 
@@ -194,24 +231,38 @@ def format_glueup_invoice(payload):
     payment_id = None
     payment_date_str = payment_completion_date_str
     payment_settle_status = None
+    seen_payment_ids = set()
     
     if isinstance(payment_obj, dict):
         payment_method = payment_obj.get('paymentMethod') or payment_obj.get('method')
         payment_amount = float(payment_obj.get('amount') or 0)
         payment_id = payment_obj.get('id') or payment_obj.get('reference')
+        if payment_id:
+            seen_payment_ids.add(str(payment_id))
         payment_settle_status = payment_obj.get('settleStatus') or payment_obj.get('status')
         if not payment_date_str:
             payment_date_str = parse_to_date_str(payment_obj.get('createdOn') or payment_obj.get('date'))
 
-    # Check line item level payments if not populated at root
+    # Check line item level payments if not already captured
     for item in line_items:
         it_pay = item.get('payment')
         if isinstance(it_pay, dict):
+            p_id = it_pay.get('id') or it_pay.get('reference')
+            p_id_str = str(p_id) if p_id else None
+            
+            # If this payment was already added from root or another line item sharing the same transaction, do not duplicate amount
+            if p_id_str and p_id_str in seen_payment_ids:
+                if not payment_method:
+                    payment_method = it_pay.get('paymentMethod')
+                continue
+            if p_id_str:
+                seen_payment_ids.add(p_id_str)
+
             if not payment_method:
                 payment_method = it_pay.get('paymentMethod')
             payment_amount += float(it_pay.get('amount') or 0)
             if not payment_id:
-                payment_id = it_pay.get('id')
+                payment_id = p_id
             if not payment_settle_status:
                 payment_settle_status = it_pay.get('settleStatus')
             if not payment_date_str:
@@ -219,12 +270,15 @@ def format_glueup_invoice(payload):
 
     total_face = float(payload.get('faceTotal') or payload.get('total') or sum(i.get('amount', 0) for i in items_list))
     if invoice_status == 'Paid':
-        if payment_amount <= 0:
+        if payment_amount <= 0 or payment_amount > total_face:
             payment_amount = total_face
         if not payment_date_str:
             payment_date_str = invoice_date_str
         if not payment_method:
             payment_method = "Online Payment"
+    else:
+        if payment_amount > total_face:
+            payment_amount = total_face
 
     payment_dict = None
     if invoice_status == 'Paid' or payment_amount > 0:
