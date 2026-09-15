@@ -1,6 +1,6 @@
 import os
 from flask import Blueprint, redirect, request, session, url_for, jsonify
-from xero_python.accounting import AccountingApi, Invoice, LineItem, Contact, Address, Phone
+from xero_python.accounting import AccountingApi, Invoice, Invoices, LineItem, Contact, Address, Phone, Payment, Account, LineAmountTypes
 from xero_python.api_client import ApiClient, serialize
 from xero_python.api_client.configuration import Configuration
 from xero_python.api_client.oauth2 import OAuth2Token
@@ -34,14 +34,34 @@ api_client = ApiClient(
     oauth2_token_saver=dummy_token_saver
 )
 
+def is_scope_error(exc):
+    """Detects whether a Xero API exception was caused by missing or insufficient OAuth scopes."""
+    if not exc:
+        return False
+    exc_str = str(exc).lower()
+    if "insufficient_scope" in exc_str or "authorizationunsuccessful" in exc_str:
+        return True
+    if hasattr(exc, 'status') and exc.status == 401:
+        headers_str = str(getattr(exc, 'headers', '')).lower()
+        body_str = str(getattr(exc, 'body', '')).lower()
+        if "insufficient_scope" in headers_str or "insufficient_scope" in body_str:
+            return True
+        if "authorizationunsuccessful" in body_str:
+            return True
+    return False
+
+class ScopeUpgradeRequiredException(Exception):
+    """Raised when Xero API operation requires user to re-authorize with upgraded scopes."""
+    pass
+
 @xero_bp.route("/xero/login")
 def login():
-    """Redirects the user to Xero to authorize the app."""
+    """Redirects the user to Xero to authorize the app with granular permissions."""
     if not CLIENT_ID or not CLIENT_SECRET:
         return "XERO_CLIENT_ID and XERO_CLIENT_SECRET not set in environment.", 500
         
-    # We request granular scopes replacing the deprecated accounting.transactions
-    scope = "openid profile email offline_access accounting.invoices accounting.contacts accounting.settings"
+    # Request granular scopes required for Invoices, Contacts, Bank Accounts, and Payments
+    scope = "openid profile email offline_access accounting.invoices accounting.contacts accounting.settings accounting.payments accounting.banktransactions"
     
     # Generate the authorization URL
     auth_url = (
@@ -96,6 +116,22 @@ def verify_xero_connection():
         session['xero_tenant_id'] = matching_tenant.tenant_id
         tenant_name = getattr(matching_tenant, 'tenant_name', None) or "Connected Organization"
         session['xero_tenant_name'] = tenant_name
+
+        # Check if the active token has payment-enabled scopes
+        token_scope = xero_token.get('scope', '')
+        if isinstance(token_scope, str):
+            token_scopes = token_scope.split()
+        elif isinstance(token_scope, (list, tuple)):
+            token_scopes = list(token_scope)
+        else:
+            token_scopes = []
+        if token_scopes and not any(s in token_scopes for s in ['accounting.payments', 'accounting.transactions']):
+            return {
+                "connected": False,
+                "tenant_id": matching_tenant.tenant_id,
+                "tenant_name": tenant_name,
+                "error": "Your Xero connection permissions need to be updated to support Payments and Bank Accounts. Please click 'Log In & Authorize Xero' to authorize the updated scopes."
+            }
         
         return {
             "connected": True,
@@ -258,24 +294,24 @@ def sync_invoice():
 
     print(f"\n[XERO SYNC] >>> Initiating sync for Invoice #{inv_id} ({invoice_number}) | Contact: {contact_display_name} ({person_name or ''}) | Email: {contact_email} | Phone: {contact_phone} | Status: {glue_up_status} | Simulate: {simulate}", flush=True)
 
-    # 1. Active Verification of Xero Connection at every sync request
+    # 1. Handle Dry-Run Simulation (if user explicitly opted into simulation via UI toggle)
+    if simulate:
+        simulated_xero_status = "PAID" if glue_up_status == 'Paid' else ("VOIDED" if glue_up_status == 'Void' else ("DRAFT" if glue_up_status == 'Draft' else "AUTHORISED"))
+        print(f"[XERO SYNC] Dry-run simulated push successful for #{invoice_number} (Status: {simulated_xero_status})", flush=True)
+        return jsonify({
+            "status": "success",
+            "message": f"[DRY RUN] Invoice #{invoice_number} simulated push to Xero! (Contact: {contact_display_name}, Status: {simulated_xero_status})",
+            "simulated": True,
+            "xero_id": "simulated-" + str(inv_id),
+            "xero_number": invoice_number,
+            "xero_status": simulated_xero_status,
+            "xero_url": None
+        }), 200
+
+    # 2. Active Verification of Xero Connection at every sync request
     status_check = verify_xero_connection()
 
     if not status_check["connected"]:
-        # If user explicitly opted into a simulated dry-run
-        if simulate:
-            simulated_xero_status = "PAID" if glue_up_status == 'Paid' else ("VOIDED" if glue_up_status == 'Void' else "AUTHORISED")
-            print(f"[XERO SYNC] Dry-run simulated push successful for #{invoice_number}", flush=True)
-            return jsonify({
-                "status": "success",
-                "message": f"[DRY RUN] Invoice #{invoice_number} simulated push to Xero! (Contact: {contact_display_name}, Status: {simulated_xero_status})",
-                "simulated": True,
-                "xero_id": "simulated-" + str(inv_id),
-                "xero_number": invoice_number,
-                "xero_status": simulated_xero_status,
-                "xero_url": None
-            }), 200
-
         # Real sync attempted, but connection check failed!
         print(f"[XERO SYNC] Blocked: Connection verification failed: {status_check['error']}", flush=True)
         return jsonify({
@@ -298,7 +334,10 @@ def sync_invoice():
         accounting_api = AccountingApi(api_client)
 
         from datetime import datetime
-        from xero_python.accounting import LineAmountTypes, Payment, Account
+        from xero_python.accounting import (
+            Invoices, Invoice, LineItem, Contact, Address, Phone,
+            LineAmountTypes, Payment, Account, Accounts
+        )
 
         # Date parsing
         raw_date = invoice_data.get('date')
@@ -335,6 +374,8 @@ def sync_invoice():
                         bank_account_ids.append(acc.account_id)
                 print(f"[XERO SYNC] Discovered {len(available_account_codes)} accounts in Xero org (Found Bank: {len(bank_account_ids) > 0})", flush=True)
         except Exception as acc_err:
+            if is_scope_error(acc_err):
+                raise ScopeUpgradeRequiredException(f"Accounts query requires scope upgrade: {acc_err}")
             print(f"[XERO SYNC] Note: Could not query Chart of Accounts: {acc_err}", flush=True)
 
         def build_line_items(force_account_code=None):
@@ -381,11 +422,38 @@ def sync_invoice():
             if bank_account_ids:
                 return bank_account_ids[0]
             try:
-                banks = accounting_api.get_accounts(xero_tenant_id=xero_tenant_id, where='Type=="BANK"')
+                # 1. Active bank accounts
+                banks = accounting_api.get_accounts(xero_tenant_id=xero_tenant_id, where='Type=="BANK" AND Status=="ACTIVE"')
                 if banks and banks.accounts:
                     return banks.accounts[0].account_id
-            except Exception:
-                pass
+
+                # 2. Accounts with EnablePaymentsToAccount == true
+                pay_accs = accounting_api.get_accounts(xero_tenant_id=xero_tenant_id, where='EnablePaymentsToAccount==true AND Status=="ACTIVE"')
+                if pay_accs and pay_accs.accounts:
+                    return pay_accs.accounts[0].account_id
+
+                # 3. Check for any active Current Asset / Liability / Clearing account and enable payments on it
+                all_accs = accounting_api.get_accounts(xero_tenant_id=xero_tenant_id, where='Status=="ACTIVE"')
+                if all_accs and all_accs.accounts:
+                    for acc in all_accs.accounts:
+                        if acc.type in ["CURRENT", "CURRLIAB", "EXPENSE", "REVENUE", "OTHERINCOME"]:
+                            try:
+                                acc_update = Account(enable_payments_to_account=True)
+                                accounting_api.update_account(
+                                    xero_tenant_id=xero_tenant_id,
+                                    account_id=acc.account_id,
+                                    accounts=Accounts(accounts=[acc_update])
+                                )
+                                print(f"[XERO SYNC] Enabled payments on account '{acc.name}' ({acc.code})", flush=True)
+                                return acc.account_id
+                            except Exception as e:
+                                if is_scope_error(e):
+                                    raise ScopeUpgradeRequiredException(f"Enable payments requires scope upgrade: {e}")
+                                print(f"[XERO SYNC] Note: Could not enable payments on {acc.code}: {e}", flush=True)
+            except Exception as e:
+                if is_scope_error(e):
+                    raise ScopeUpgradeRequiredException(f"Clearing account lookup requires scope upgrade: {e}")
+                print(f"[XERO SYNC] Note: Error locating clearing account: {e}", flush=True)
             return None
 
         # Core sync logic
@@ -558,46 +626,120 @@ def sync_invoice():
                 xero_url = f"https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID={ex_id}"
                 print(f"[XERO SYNC] Found ACTIVE existing invoice #{ex_num} in Xero (ID: {ex_id}, Status: {ex_status})", flush=True)
 
-                if glue_up_status == 'Paid' and ex_status != 'PAID':
-                    if ex_status == 'DRAFT':
+                if glue_up_status == 'Void' and ex_status != 'VOIDED':
+                    if ex_status == 'PAID':
+                        return False, f"Invoice #{ex_num} is already PAID in Xero and cannot be voided.", ex_id, ex_num, ex_status, xero_url
+                    try:
                         accounting_api.update_invoice(
                             xero_tenant_id=xero_tenant_id,
                             invoice_id=ex_id,
-                            invoices={"invoices": [Invoice(invoice_id=ex_id, status="AUTHORISED")]}
+                            invoices=Invoices(invoices=[Invoice(status="VOIDED")])
                         )
-                    clearing_id = get_clearing_account_id()
-                    if clearing_id:
-                        payment = Payment(
-                            invoice=Invoice(invoice_id=ex_id),
-                            account=Account(account_id=clearing_id),
-                            amount=sum(float(item.get('amount', 0)) for item in invoice_data.get('items', [])),
-                            date=parsed_date
+                    except Exception as v_err:
+                        if is_scope_error(v_err):
+                            raise ScopeUpgradeRequiredException(str(v_err))
+                        print(f"[XERO SYNC] Note updating to voided via update_invoice: {v_err}", flush=True)
+                        accounting_api.create_invoices(
+                            xero_tenant_id=xero_tenant_id,
+                            invoices=Invoices(invoices=[Invoice(invoice_id=ex_id, status="VOIDED")])
                         )
-                        accounting_api.create_payment(xero_tenant_id=xero_tenant_id, payment=payment)
-                        print(f"[XERO SYNC] Applied payment to active invoice #{ex_num}", flush=True)
-                        return True, f"Invoice #{ex_num} exists in Xero and has been updated to PAID!", ex_id, ex_num, "PAID", xero_url
-                    else:
-                        return True, f"Invoice #{ex_num} exists in Xero, but payment sync requires an active bank clearing account.", ex_id, ex_num, ex_status, xero_url
-
-                elif glue_up_status == 'Void' and ex_status != 'VOIDED':
-                    if ex_status == 'PAID':
-                        return False, f"Invoice #{ex_num} is already PAID in Xero and cannot be voided.", ex_id, ex_num, ex_status, xero_url
-                    accounting_api.update_invoice(
-                        xero_tenant_id=xero_tenant_id,
-                        invoice_id=ex_id,
-                        invoices={"invoices": [Invoice(invoice_id=ex_id, status="VOIDED")]}
-                    )
                     return True, f"Invoice #{ex_num} marked as VOIDED in Xero!", ex_id, ex_num, "VOIDED", xero_url
 
-                elif xero_status != ex_status and ex_status not in ["PAID"]:
-                    accounting_api.update_invoice(
+                elif ex_status == 'PAID':
+                    if glue_up_status == 'Paid':
+                        return True, f"Invoice #{ex_num} is already PAID and up to date in Xero.", ex_id, ex_num, "PAID", xero_url
+                    else:
+                        return False, f"Invoice #{ex_num} is already recorded as PAID in Xero (line items cannot be altered on paid invoices).", ex_id, ex_num, "PAID", xero_url
+
+                # Active invoice is DRAFT or AUTHORISED:
+                # Update Contact, Line Items, Due Date, Reference, and Status to synchronize latest changes from Glue Up!
+                updated_line_items = build_line_items()
+                target_status = "AUTHORISED" if glue_up_status in ['Paid', 'Awaiting Payment', 'Overdue'] else ("DRAFT" if glue_up_status == 'Draft' else ex_status)
+
+                update_invoice_obj = Invoice(
+                    invoice_id=ex_id,
+                    contact=contact_obj,
+                    line_items=updated_line_items,
+                    due_date=parsed_due_date,
+                    date=parsed_date,
+                    reference=reference_str,
+                    line_amount_types=LineAmountTypes.INCLUSIVE,
+                    status=target_status
+                )
+
+                print(f"[XERO SYNC] Updating existing invoice #{ex_num} in Xero with latest Glue Up items and details...", flush=True)
+                try:
+                    upd_resp = accounting_api.update_invoice(
                         xero_tenant_id=xero_tenant_id,
                         invoice_id=ex_id,
-                        invoices={"invoices": [Invoice(invoice_id=ex_id, status=xero_status)]}
+                        invoices=Invoices(invoices=[update_invoice_obj])
                     )
-                    return True, f"Invoice #{ex_num} status updated to {xero_status} in Xero!", ex_id, ex_num, xero_status, xero_url
-                else:
-                    return True, f"Invoice #{ex_num} is already synced in Xero (Status: {ex_status}).", ex_id, ex_num, ex_status, xero_url
+                    if upd_resp and upd_resp.invoices:
+                        ex_status = upd_resp.invoices[0].status or target_status
+                        print(f"[XERO SYNC] Successfully updated invoice #{ex_num} via update_invoice (Status: {ex_status})", flush=True)
+                except Exception as up_err:
+                    if is_scope_error(up_err):
+                        raise ScopeUpgradeRequiredException(str(up_err))
+                    print(f"[XERO SYNC] Note on update_invoice: {up_err}. Trying create_invoices POST...", flush=True)
+                    try:
+                        upd_resp = accounting_api.create_invoices(
+                            xero_tenant_id=xero_tenant_id,
+                            invoices=Invoices(invoices=[update_invoice_obj])
+                        )
+                        if upd_resp and upd_resp.invoices:
+                            ex_status = upd_resp.invoices[0].status or target_status
+                            print(f"[XERO SYNC] Successfully updated invoice #{ex_num} via create_invoices (Status: {ex_status})", flush=True)
+                    except Exception as up2_err:
+                        if is_scope_error(up2_err):
+                            raise ScopeUpgradeRequiredException(str(up2_err))
+                        print(f"[XERO SYNC] Warning: could not update invoice details: {up2_err}", flush=True)
+
+                # If Glue Up status is 'Paid' and Xero invoice is not yet marked 'PAID':
+                if glue_up_status == 'Paid' and ex_status != 'PAID':
+                    if ex_status == 'DRAFT':
+                        try:
+                            accounting_api.update_invoice(
+                                xero_tenant_id=xero_tenant_id,
+                                invoice_id=ex_id,
+                                invoices=Invoices(invoices=[Invoice(status="AUTHORISED")])
+                            )
+                            ex_status = "AUTHORISED"
+                        except Exception as d_err:
+                            if is_scope_error(d_err):
+                                raise ScopeUpgradeRequiredException(str(d_err))
+                            print(f"[XERO SYNC] Note authorizing draft: {d_err}", flush=True)
+
+                    clearing_id = get_clearing_account_id()
+                    pay_info = invoice_data.get('payment') or {}
+                    pay_amount = float(pay_info.get('amount') or sum(float(item.get('amount', 0)) for item in invoice_data.get('items', [])))
+                    pay_date_str = pay_info.get('date') or invoice_data.get('payment_completion_date') or raw_date
+                    try:
+                        parsed_pay_date = datetime.strptime(pay_date_str, "%Y-%m-%d")
+                    except Exception:
+                        parsed_pay_date = parsed_date
+                    pay_ref = pay_info.get('reference') or f"GlueUp-{target_inv_number}"
+
+                    if clearing_id:
+                        try:
+                            payment = Payment(
+                                invoice=Invoice(invoice_id=ex_id),
+                                account=Account(account_id=clearing_id),
+                                amount=pay_amount,
+                                date=parsed_pay_date,
+                                reference=f"GlueUp {pay_ref}".strip()
+                            )
+                            accounting_api.create_payment(xero_tenant_id=xero_tenant_id, payment=payment)
+                            print(f"[XERO SYNC] Applied payment of ${pay_amount} to invoice #{ex_num}", flush=True)
+                            return True, f"Invoice #{ex_num} updated in Xero with latest Glue Up details and marked as PAID!", ex_id, ex_num, "PAID", xero_url
+                        except Exception as p_err:
+                            if is_scope_error(p_err):
+                                raise ScopeUpgradeRequiredException(str(p_err))
+                            print(f"[XERO SYNC] Payment application error: {p_err}", flush=True)
+                            return False, f"Invoice #{ex_num} details updated in Xero, but payment creation failed: {p_err}", ex_id, ex_num, ex_status, xero_url
+                    else:
+                        return False, f"Invoice #{ex_num} updated in Xero, but payment sync requires an active Bank Account or payment-enabled clearing account in Xero.", ex_id, ex_num, ex_status, xero_url
+
+                return True, f"Invoice #{ex_num} updated in Xero with latest details from Glue Up! (Status: {ex_status})", ex_id, ex_num, ex_status, xero_url
 
             elif inactive_invoices:
                 last_inactive = inactive_invoices[0]
@@ -634,7 +776,7 @@ def sync_invoice():
             print(f"[XERO SYNC] Sending POST /Invoices to Xero for #{target_inv_number or 'Auto-assigned'}...", flush=True)
             created_invoices = accounting_api.create_invoices(
                 xero_tenant_id=xero_tenant_id,
-                invoices={"invoices": [xero_invoice]}
+                invoices=Invoices(invoices=[xero_invoice])
             )
 
             xero_res = created_invoices.invoices[0] if created_invoices and created_invoices.invoices else None
@@ -662,7 +804,7 @@ def sync_invoice():
                 if needs_retry:
                     retry_resp = accounting_api.create_invoices(
                         xero_tenant_id=xero_tenant_id,
-                        invoices={"invoices": [xero_invoice]}
+                        invoices=Invoices(invoices=[xero_invoice])
                     )
                     xero_res = retry_resp.invoices[0] if retry_resp and retry_resp.invoices else None
                     if xero_res and not getattr(xero_res, 'has_errors', False):
@@ -685,23 +827,35 @@ def sync_invoice():
             # 4. Handle Payments for Paid Invoices
             if glue_up_status == 'Paid':
                 clearing_id = get_clearing_account_id()
+                pay_info = invoice_data.get('payment') or {}
+                pay_amount = float(pay_info.get('amount') or sum(float(item.get('amount', 0)) for item in invoice_data.get('items', [])))
+                pay_date_str = pay_info.get('date') or invoice_data.get('payment_completion_date') or raw_date
+                try:
+                    parsed_pay_date = datetime.strptime(pay_date_str, "%Y-%m-%d")
+                except Exception:
+                    parsed_pay_date = parsed_date
+                pay_ref = pay_info.get('reference') or f"GlueUp-{target_inv_number}"
+
                 if clearing_id:
                     try:
                         payment = Payment(
                             invoice=Invoice(invoice_id=new_id),
                             account=Account(account_id=clearing_id),
-                            amount=sum(float(item.get('amount', 0)) for item in invoice_data.get('items', [])),
-                            date=parsed_date
+                            amount=pay_amount,
+                            date=parsed_pay_date,
+                            reference=f"GlueUp {pay_ref}".strip()
                         )
                         accounting_api.create_payment(xero_tenant_id=xero_tenant_id, payment=payment)
                         final_status = "PAID"
                         print(f"[XERO SYNC] Payment applied to Invoice #{new_num}!", flush=True)
                         return True, f"Invoice #{new_num} successfully created in Xero and marked as PAID!", new_id, new_num, final_status, xero_url
                     except Exception as p_err:
+                        if is_scope_error(p_err):
+                            raise ScopeUpgradeRequiredException(str(p_err))
                         print(f"[XERO SYNC] Payment application note: {p_err}", flush=True)
-                        return True, f"Invoice #{new_num} created in Xero, but payment sync requires bank account verification: {p_err}", new_id, new_num, final_status, xero_url
+                        return False, f"Invoice #{new_num} created in Xero, but payment creation failed: {p_err}", new_id, new_num, final_status, xero_url
                 else:
-                    return True, f"Invoice #{new_num} created in Xero! (Connect a Bank Account in Xero to auto-apply payments)", new_id, new_num, final_status, xero_url
+                    return False, f"Invoice #{new_num} created in Xero, but payment sync requires an active Bank Account or payment-enabled clearing account in Xero.", new_id, new_num, final_status, xero_url
 
             # 5. Handle Void Invoices
             if glue_up_status == 'Void':
@@ -709,12 +863,28 @@ def sync_invoice():
                     accounting_api.update_invoice(
                         xero_tenant_id=xero_tenant_id,
                         invoice_id=new_id,
-                        invoices={"invoices": [Invoice(invoice_id=new_id, status="VOIDED")]}
+                        invoices=Invoices(invoices=[Invoice(status="VOIDED")])
                     )
                     final_status = "VOIDED"
                     print(f"[XERO SYNC] Marked Invoice #{new_num} as VOIDED in Xero", flush=True)
+                    return True, f"Invoice #{new_num} successfully created and marked as VOIDED in Xero!", new_id, new_num, final_status, xero_url
                 except Exception as v_err:
+                    if is_scope_error(v_err):
+                        raise ScopeUpgradeRequiredException(str(v_err))
                     print(f"[XERO SYNC] Void update note: {v_err}", flush=True)
+                    try:
+                        accounting_api.create_invoices(
+                            xero_tenant_id=xero_tenant_id,
+                            invoices=Invoices(invoices=[Invoice(invoice_id=new_id, status="VOIDED")])
+                        )
+                        final_status = "VOIDED"
+                        print(f"[XERO SYNC] Marked Invoice #{new_num} as VOIDED via create_invoices update in Xero", flush=True)
+                        return True, f"Invoice #{new_num} successfully created and marked as VOIDED in Xero!", new_id, new_num, final_status, xero_url
+                    except Exception as v2_err:
+                        if is_scope_error(v2_err):
+                            raise ScopeUpgradeRequiredException(str(v2_err))
+                        print(f"[XERO SYNC] Void update fallback error: {v2_err}", flush=True)
+                        return True, f"Invoice #{new_num} created in Xero (AUTHORISED), but could not be voided: {v_err}", new_id, new_num, final_status, xero_url
 
             return True, f"Invoice #{new_num} successfully created in Xero!", new_id, new_num, final_status, xero_url
 
@@ -724,9 +894,24 @@ def sync_invoice():
             try:
                 success, msg, xero_id, xero_num, final_status, xero_url = attempt_sync()
                 break
+            except ScopeUpgradeRequiredException as scope_err:
+                print(f"[XERO SYNC] Scope upgrade required: {scope_err}", flush=True)
+                return jsonify({
+                    "status": "error",
+                    "message": "Your Xero session requires updated permissions (scopes) to sync payments and access bank accounts. Please click 'Log In & Authorize Xero' below to reconnect with the updated permissions.",
+                    "auth_required": True,
+                    "login_url": url_for('xero_bp.login')
+                }), 401
             except Exception as api_err:
                 err_str = str(api_err)
                 print(f"[XERO SYNC] Exception during sync attempt {attempt+1}: {err_str}", flush=True)
+                if is_scope_error(api_err):
+                    return jsonify({
+                        "status": "error",
+                        "message": "Your Xero session requires updated permissions (scopes) to sync payments and access bank accounts. Please click 'Log In & Authorize Xero' below to reconnect with the updated permissions.",
+                        "auth_required": True,
+                        "login_url": url_for('xero_bp.login')
+                    }), 401
                 if "429" in err_str:
                     if attempt < max_retries - 1:
                         backoff = 2 ** attempt
@@ -739,8 +924,14 @@ def sync_invoice():
                     print("[XERO SYNC] Token expired, attempting refresh...", flush=True)
                     try:
                         api_client.refresh_oauth2_token()
-                    except Exception:
-                        pass
+                    except Exception as ref_err:
+                        print(f"[XERO SYNC] Refresh failed: {ref_err}", flush=True)
+                        return jsonify({
+                            "status": "error",
+                            "message": "Xero authentication expired. Please click 'Log In & Authorize Xero' to reconnect.",
+                            "auth_required": True,
+                            "login_url": url_for('xero_bp.login')
+                        }), 401
                 else:
                     return jsonify({"status": "error", "message": f"Xero API Error: {err_str}"}), 400
 
@@ -754,7 +945,22 @@ def sync_invoice():
             "xero_url": xero_url
         }), status_code
         
+    except ScopeUpgradeRequiredException as scope_err:
+        print(f"[XERO SYNC] Scope upgrade required: {scope_err}", flush=True)
+        return jsonify({
+            "status": "error",
+            "message": "Your Xero session requires updated permissions (scopes) to sync payments and access bank accounts. Please click 'Log In & Authorize Xero' below to reconnect with the updated permissions.",
+            "auth_required": True,
+            "login_url": url_for('xero_bp.login')
+        }), 401
     except Exception as e:
+        if is_scope_error(e):
+            return jsonify({
+                "status": "error",
+                "message": "Your Xero session requires updated permissions (scopes) to sync payments and access bank accounts. Please click 'Log In & Authorize Xero' below to reconnect with the updated permissions.",
+                "auth_required": True,
+                "login_url": url_for('xero_bp.login')
+            }), 401
         print(f"[XERO SYNC] Unhandled Exception: {str(e)}", flush=True)
         return jsonify({"status": "error", "message": f"Xero Error: {str(e)}"}), 500
 
@@ -771,8 +977,9 @@ def check_statuses():
     xero_token = session.get('xero_token')
     xero_tenant_id = session.get('xero_tenant_id')
     
-    # Mock status lookup for testing UI badges without active Xero token
-    MOCK_STATUSES = {
+    # Dynamic status lookup from mock data when running in mock / disconnected mode
+    mock_status_map = {
+        # Legacy IDs fallback
         "12836418": "AUTHORISED",
         "12790728": "PAID",
         "12769018": "AUTHORISED",
@@ -780,9 +987,30 @@ def check_statuses():
         "12780507": "DRAFT",
         "12769138": "VOIDED"
     }
+    try:
+        from glue_up_api import GlueUpAPI
+        glueup = GlueUpAPI()
+        if glueup.has_mock_data():
+            for m in glueup.get_mock_invoices():
+                mid = str(m.get('id') or '')
+                raw_st = str(m.get('status') or '')
+                is_vd = bool(m.get('voided', False))
+                b_due = float(m.get('balanceDue') if m.get('balanceDue') is not None else 0)
+                if is_vd or raw_st.lower() in ['void', 'voided', 'cancelled']:
+                    x_st = 'VOIDED'
+                elif raw_st.lower() == 'draft':
+                    x_st = 'DRAFT'
+                elif b_due <= 0 or raw_st.lower() == 'paid':
+                    x_st = 'PAID'
+                else:
+                    x_st = 'AUTHORISED'
+                if mid:
+                    mock_status_map[mid] = x_st
+    except Exception as e:
+        print(f"Error loading mock status map: {e}")
 
     if not xero_token or not xero_tenant_id:
-        simulated = {str(i): MOCK_STATUSES[str(i)] for i in invoice_ids if str(i) in MOCK_STATUSES}
+        simulated = {str(i): mock_status_map[str(i)] for i in invoice_ids if str(i) in mock_status_map}
         return jsonify({"status": "success", "data": simulated, "connected": False})
         
     try:

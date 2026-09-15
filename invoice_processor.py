@@ -184,6 +184,59 @@ def format_glueup_invoice(payload):
             "account": "Sales"
         })
 
+    # 6. Payment Information extraction (Glue Up API models)
+    raw_completion_date = payload.get('paymentCompletionDate')
+    payment_completion_date_str = parse_to_date_str(raw_completion_date)
+    
+    payment_obj = payload.get('payment')
+    payment_method = None
+    payment_amount = 0.0
+    payment_id = None
+    payment_date_str = payment_completion_date_str
+    payment_settle_status = None
+    
+    if isinstance(payment_obj, dict):
+        payment_method = payment_obj.get('paymentMethod') or payment_obj.get('method')
+        payment_amount = float(payment_obj.get('amount') or 0)
+        payment_id = payment_obj.get('id') or payment_obj.get('reference')
+        payment_settle_status = payment_obj.get('settleStatus') or payment_obj.get('status')
+        if not payment_date_str:
+            payment_date_str = parse_to_date_str(payment_obj.get('createdOn') or payment_obj.get('date'))
+
+    # Check line item level payments if not populated at root
+    for item in line_items:
+        it_pay = item.get('payment')
+        if isinstance(it_pay, dict):
+            if not payment_method:
+                payment_method = it_pay.get('paymentMethod')
+            payment_amount += float(it_pay.get('amount') or 0)
+            if not payment_id:
+                payment_id = it_pay.get('id')
+            if not payment_settle_status:
+                payment_settle_status = it_pay.get('settleStatus')
+            if not payment_date_str:
+                payment_date_str = parse_to_date_str(it_pay.get('createdOn'))
+
+    total_face = float(payload.get('faceTotal') or payload.get('total') or sum(i.get('amount', 0) for i in items_list))
+    if invoice_status == 'Paid':
+        if payment_amount <= 0:
+            payment_amount = total_face
+        if not payment_date_str:
+            payment_date_str = invoice_date_str
+        if not payment_method:
+            payment_method = "Online Payment"
+
+    payment_dict = None
+    if invoice_status == 'Paid' or payment_amount > 0:
+        payment_dict = {
+            "id": payment_id or f"PAY-{invoice_id}",
+            "amount": round(payment_amount, 2),
+            "method": payment_method or "Online Payment",
+            "reference": str(payment_id or f"GlueUp-{invoice_number}"),
+            "date": payment_date_str or invoice_date_str,
+            "settle_status": payment_settle_status or "Settle"
+        }
+
     return {
         "invoice_id": invoice_id,
         "invoice_number": invoice_number,
@@ -198,7 +251,9 @@ def format_glueup_invoice(payload):
         "contact_email": contact_email,
         "contact_phone": contact_phone,
         "billing_address": billing_address,
-        "items": items_list
+        "items": items_list,
+        "payment": payment_dict,
+        "payment_completion_date": payment_completion_date_str or (payment_date_str if invoice_status == 'Paid' else None)
     }
 
 @invoice_bp.route('/api/invoices/mock', methods=['GET'])
