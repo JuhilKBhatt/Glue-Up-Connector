@@ -5,162 +5,300 @@ from glue_up_api import GlueUpAPI
 
 invoice_bp = Blueprint('invoice_bp', __name__)
 
+def format_glueup_invoice(payload):
+    """
+    Standardizes a Glue Up invoice dictionary into a clean, normalized payload
+    ready for frontend display and Xero synchronization.
+    Handles differences between list and detail responses and mock data.
+    """
+    # 1. Invoice ID and Number
+    invoice_id = payload.get('id') or payload.get('invoiceId') or payload.get('orderId') or payload.get('uuid') or 'Unknown'
+    invoice_number = payload.get('number') or f"INV-{invoice_id}"
+    
+    # 2. Date parsing (ms timestamp or ISO string)
+    def parse_to_date_str(val):
+        if not val:
+            return None
+        try:
+            if isinstance(val, (int, float)):
+                return datetime.fromtimestamp(val / 1000.0).strftime("%Y-%m-%d")
+            return str(val)[:10]
+        except Exception:
+            return None
+
+    raw_date = payload.get('issueDate') or payload.get('createdOn') or payload.get('createdDate') or payload.get('date')
+    invoice_date_str = parse_to_date_str(raw_date) or datetime.now().strftime("%Y-%m-%d")
+    
+    raw_due_date = payload.get('dueDate')
+    due_date_str = parse_to_date_str(raw_due_date) or invoice_date_str
+    
+    # 3. Status determination
+    is_voided = payload.get('voided', False)
+    balance_due = float(payload.get('balanceDue') if payload.get('balanceDue') is not None else 0)
+    glueup_status = str(payload.get('status') or '')
+    
+    now_ms = datetime.now().timestamp() * 1000
+    due_date_ms = None
+    if isinstance(raw_due_date, (int, float)):
+        due_date_ms = float(raw_due_date)
+    
+    if is_voided or glueup_status.lower() in ['voided', 'void', 'canceled', 'cancelled']:
+        invoice_status = 'Void'
+    elif glueup_status.lower() == 'draft':
+        invoice_status = 'Draft'
+    elif balance_due <= 0 or glueup_status.lower() == 'paid':
+        invoice_status = 'Paid'
+    elif due_date_ms and due_date_ms < now_ms:
+        invoice_status = 'Overdue'
+    else:
+        invoice_status = 'Awaiting Payment'
+
+    # 4. Purchaser, Company & Contact extraction
+    company_name = payload.get('purchaserCompanyName')
+    if not company_name:
+        comp_obj = payload.get('company')
+        if isinstance(comp_obj, dict):
+            company_name = comp_obj.get('name')
+        elif isinstance(comp_obj, str):
+            company_name = comp_obj
+
+    purchaser_given = payload.get('purchaserGivenName', '') or ''
+    purchaser_family = payload.get('purchaserFamilyName', '') or ''
+    contact_name = f"{purchaser_given} {purchaser_family}".strip() or None
+    contact_email = payload.get('purchaserEmail')
+    contact_phone = payload.get('purchaserPhone') or payload.get('phone')
+
+    # Billing Address extraction
+    address_line1 = payload.get('purchaserAddress') or payload.get('address') or ''
+    address_line2 = payload.get('purchaserAddressLine2') or ''
+    city = payload.get('purchaserCity') or payload.get('city') or ''
+    region = payload.get('purchaserState') or payload.get('state') or payload.get('region') or ''
+    postal_code = payload.get('purchaserPostalCode') or payload.get('postalCode') or payload.get('zip') or ''
+    country = payload.get('purchaserCountry') or payload.get('country') or 'Australia'
+
+    if isinstance(address_line1, dict):
+        addr_dict = address_line1
+        address_line1 = addr_dict.get('line1') or addr_dict.get('street') or ''
+        address_line2 = addr_dict.get('line2') or ''
+        city = addr_dict.get('city') or ''
+        region = addr_dict.get('region') or addr_dict.get('state') or ''
+        postal_code = addr_dict.get('postalCode') or addr_dict.get('postal_code') or addr_dict.get('zip') or ''
+        country = addr_dict.get('country') or 'Australia'
+
+    # Fallback to contacts array if top-level purchaser fields missing
+    contacts_list = payload.get('contacts', [])
+    if contacts_list and len(contacts_list) > 0:
+        first_contact = contacts_list[0]
+        if not purchaser_given:
+            purchaser_given = first_contact.get('givenName', '') or ''
+        if not purchaser_family:
+            purchaser_family = first_contact.get('familyName', '') or ''
+        if not contact_name:
+            contact_name = f"{purchaser_given} {purchaser_family}".strip() or None
+        if not contact_email:
+            email_field = first_contact.get('emailAddress')
+            if isinstance(email_field, dict):
+                contact_email = email_field.get('value')
+            elif isinstance(email_field, str):
+                contact_email = email_field
+        if not contact_phone:
+            contact_phone = first_contact.get('phone') or first_contact.get('workPhone') or first_contact.get('mobilePhone')
+        if not company_name:
+            company_name = first_contact.get('companyName')
+        if not address_line1:
+            c_addr = first_contact.get('address') or first_contact.get('postalAddress')
+            if isinstance(c_addr, dict):
+                address_line1 = c_addr.get('line1') or c_addr.get('street') or ''
+                address_line2 = c_addr.get('line2') or ''
+                city = c_addr.get('city') or city
+                region = c_addr.get('region') or c_addr.get('state') or region
+                postal_code = c_addr.get('postalCode') or c_addr.get('postal_code') or postal_code
+                country = c_addr.get('country') or country
+            elif isinstance(c_addr, str):
+                address_line1 = c_addr
+
+    if not company_name:
+        company_name = contact_name or "AJBCC Member Organization"
+
+    billing_address = {
+        "address_line1": address_line1,
+        "address_line2": address_line2,
+        "city": city,
+        "region": region,
+        "postal_code": postal_code,
+        "country": country,
+        "attention_to": contact_name or company_name
+    }
+
+    # 5. Line items parsing & Chart of Accounts mapping
+    line_items = payload.get('items') or payload.get('lineItems') or payload.get('line_items') or []
+    items_list = []
+
+    for item in line_items:
+        raw_type = item.get('type', 'Standard')
+        description = item.get('description') or item.get('name') or ''
+        
+        # Categorize badge type
+        type_lower = str(raw_type).lower()
+        desc_lower = str(description).lower()
+        
+        if "additional" in type_lower or "additional" in desc_lower or "extra" in type_lower:
+            badge_type = "Additional Member"
+            account_name = "Membership Subscriptions - Ordinary - Additional"
+        elif "application" in type_lower or "renewal" in type_lower or "membership" in type_lower or "nominate" in desc_lower:
+            badge_type = "Membership Application"
+            account_name = "Membership Subscriptions - Ordinary - Nominated"
+        elif "ticket" in type_lower or "event" in type_lower:
+            badge_type = "Event Ticket"
+            account_name = "Sales - Event Tickets"
+        elif "custom" in type_lower or "sponsorship" in desc_lower:
+            badge_type = "Custom / Sponsorship"
+            account_name = "Sales - Sponsorship / Custom"
+        else:
+            badge_type = "Standard"
+            account_name = "Sales"
+            
+        if not description:
+            description = badge_type
+
+        amount = float(item.get('faceValue') or item.get('amount') or item.get('total') or 0)
+        quantity = float(item.get('quantity') or item.get('count') or 1.0)
+
+        items_list.append({
+            "description": description,
+            "amount": amount,
+            "quantity": quantity,
+            "type": badge_type,
+            "account": account_name
+        })
+
+    # If an invoice has no explicit items array (summary payload), synthesize from totals
+    if not items_list:
+        total_amt = float(payload.get('faceTotal') or payload.get('total') or balance_due or 0)
+        title = payload.get('title') or payload.get('origin') or 'Membership Invoice'
+        items_list.append({
+            "description": title,
+            "amount": total_amt,
+            "quantity": 1.0,
+            "type": "Standard",
+            "account": "Sales"
+        })
+
+    return {
+        "invoice_id": invoice_id,
+        "invoice_number": invoice_number,
+        "date": invoice_date_str,
+        "due_date": due_date_str,
+        "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "status": invoice_status,
+        "company_name": company_name,
+        "contact_name": contact_name,
+        "contact_first_name": purchaser_given,
+        "contact_last_name": purchaser_family,
+        "contact_email": contact_email,
+        "contact_phone": contact_phone,
+        "billing_address": billing_address,
+        "items": items_list
+    }
+
+@invoice_bp.route('/api/invoices/mock', methods=['GET'])
+def get_mock_invoices_route():
+    """Returns mock invoices generated directly from Glue Up API models."""
+    try:
+        api = GlueUpAPI()
+        raw_mock = api.get_mock_invoices()
+        processed = [format_glueup_invoice(inv) for inv in raw_mock]
+        return jsonify({
+            "status": "success",
+            "message": f"Loaded {len(processed)} realistic mockup invoices modeled from Glue Up API",
+            "source": "mock",
+            "data": processed
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 @invoice_bp.route('/api/invoices/fetch', methods=['GET', 'POST'])
 def fetch_invoices():
     try:
         api = GlueUpAPI()
-        raw_invoices = api.get_all_invoices()
         
-        # Default to the current month (from 1st of month to today) if not provided
+        # Source can be 'mock' or 'live' (defaults to 'mock' for fast, reliable testing)
+        source = request.args.get('source', 'mock')
+        
         today = datetime.now()
         first_of_month = today.replace(day=1).strftime("%Y-%m-%d")
         today_str = today.strftime("%Y-%m-%d")
         
-        from_date = request.args.get('from_date', first_of_month)
-        to_date = request.args.get('to_date', today_str)
-        
+        from_date = request.args.get('from_date')
+        to_date = request.args.get('to_date')
+
+        if source == 'mock':
+            raw_mock = api.get_mock_invoices()
+            processed_invoices = [format_glueup_invoice(inv) for inv in raw_mock]
+            
+            # Optional date filtering on mock data if user explicitly provided dates
+            if from_date or to_date:
+                filtered = []
+                for inv in processed_invoices:
+                    d = inv.get('date', '')
+                    if from_date and d < from_date:
+                        continue
+                    if to_date and d > to_date:
+                        continue
+                    filtered.append(inv)
+                processed_invoices = filtered
+
+            return jsonify({
+                "status": "success",
+                "message": f"Loaded {len(processed_invoices)} mock invoices from Glue Up API model",
+                "source": "mock",
+                "data": processed_invoices
+            })
+
+        # Live Glue Up API branch
+        raw_invoices = api.get_all_invoices()
+        if not from_date:
+            from_date = first_of_month
+        if not to_date:
+            to_date = today_str
+
         processed_invoices = []
         for payload in raw_invoices:
-            # 1. Filter for the target date's invoices
-            # Date field might be createdDate, issueDate, date, etc.
-            invoice_date = payload.get('createdDate') or payload.get('issueDate') or payload.get('date')
-            
-            invoice_date_str = None
-            if invoice_date:
+            # Check date range
+            raw_date = payload.get('issueDate') or payload.get('createdOn') or payload.get('createdDate') or payload.get('date')
+            if not raw_date:
+                continue
+                
+            try:
+                if isinstance(raw_date, (int, float)):
+                    inv_date_str = datetime.fromtimestamp(raw_date / 1000.0).strftime("%Y-%m-%d")
+                else:
+                    inv_date_str = str(raw_date)[:10]
+            except Exception:
+                continue
+
+            if from_date and inv_date_str < from_date:
+                continue
+            if to_date and inv_date_str > to_date:
+                continue
+
+            invoice_id = payload.get('id') or payload.get('invoiceId')
+            # Fetch detailed invoice payload to extract nested line items if needed
+            if invoice_id and not payload.get('items'):
                 try:
-                    if isinstance(invoice_date, (int, float)):
-                        # Assume Unix timestamp in ms (standard for Glue Up)
-                        dt = datetime.fromtimestamp(invoice_date / 1000.0)
-                        invoice_date_str = dt.strftime("%Y-%m-%d")
-                    else:
-                        # Assume string like "2026-09-08T..."
-                        invoice_date_str = str(invoice_date)[:10]
-                except Exception:
-                    pass
-                    
-            # Skip if outside of the date range
-            if not invoice_date_str:
-                continue
-                
-            if from_date and invoice_date_str < from_date:
-                continue
-            if to_date and invoice_date_str > to_date:
-                continue
-                
-            # We try to extract common fields
-            invoice_id = payload.get('id') or payload.get('invoiceId') or payload.get('orderId') or payload.get('uuid') or 'Unknown'
-            
-            # The list endpoint doesn't return items, so we fetch the detailed invoice
-            if invoice_id != 'Unknown':
-                detailed_payload = api.get_invoice_details(invoice_id)
-                if detailed_payload:
-                    payload = detailed_payload
-                    
-            # Calculate Status
-            is_voided = payload.get('voided', False)
-            balance_due = float(payload.get('balanceDue') or 0)
-            glueup_status = payload.get('status')
-            
-            due_date_ms = payload.get('dueDate')
-            due_date_str = None
-            if due_date_ms:
-                try:
-                    if isinstance(due_date_ms, (int, float)):
-                        due_date_str = datetime.fromtimestamp(due_date_ms / 1000.0).strftime("%Y-%m-%d")
-                    else:
-                        due_date_str = str(due_date_ms)[:10]
-                except Exception:
-                    pass
-            if not due_date_str:
-                due_date_str = invoice_date_str
-            
-            now_ms = datetime.now().timestamp() * 1000
-            
-            if is_voided or glueup_status in ['Voided', 'Void', 'Canceled']:
-                invoice_status = 'Void'
-            elif glueup_status == 'Draft':
-                invoice_status = 'Draft'
-            elif balance_due <= 0:
-                invoice_status = 'Paid'
-            elif due_date_ms and float(due_date_ms) < now_ms:
-                invoice_status = 'Overdue'
-            else:
-                invoice_status = 'Awaiting Payment'
-                    
-            line_items = payload.get('items') or payload.get('lineItems') or payload.get('line_items') or []
-            
-            # Extract Company and Contact info
-            company_obj = payload.get('company', {})
-            company_name = company_obj.get('name') if isinstance(company_obj, dict) else None
-            
-            contacts_list = payload.get('contacts', [])
-            contact_name = None
-            if contacts_list and len(contacts_list) > 0:
-                first_contact = contacts_list[0]
-                given_name = first_contact.get('givenName', '')
-                family_name = first_contact.get('familyName', '')
-                contact_name = f"{given_name} {family_name}".strip()
-            
-            # Formatted payload with a flat list of line items
-            formatted_payload = {
-                "invoice_id": invoice_id,
-                "date": invoice_date_str,
-                "due_date": due_date_str,
-                "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "status": invoice_status,
-                "company_name": company_name,
-                "contact_name": contact_name,
-                "items": []
-            }
-            
-            for item in line_items:
-                # In detailed payload, type is often explicit e.g. "MembershipApplication"
-                item_type = item.get('type', 'Standard')
-                description = item.get('description', item.get('name', ''))
-                
-                # If description is empty but we have a type, use type as description
-                if not description:
-                    if item_type == 'MembershipApplication':
-                        description = 'Membership Application'
-                    elif item_type == 'AdditionalMember':
-                        description = 'Additional Member'
-                    else:
-                        description = item_type
-                
-                # Format the type for the badge
-                badge_type = "Standard"
-                desc_lower = description.lower()
-                type_lower = item_type.lower()
-                
-                if "additional" in type_lower or "additional" in desc_lower or "extra" in type_lower or "extra" in desc_lower:
-                    badge_type = "Additional Member"
-                elif "application" in type_lower or "application" in desc_lower:
-                    badge_type = "Membership Application"
-                
-                amount = item.get('faceValue') or item.get('amount') or item.get('total') or 0
-                quantity = item.get('quantity') or item.get('count') or 1.0
-                
-                # Map to Xero accounts based on the line item type
-                account_name = item.get('account') or item.get('accountCode') or item.get('accountingCode') or 'Uncategorized'
-                
-                if badge_type == "Membership Application":
-                    account_name = "Membership Subscriptions - Ordinary - Nominated"
-                elif badge_type == "Additional Member":
-                    account_name = "Membership Subscriptions - Ordinary - Additional"
-                
-                formatted_payload["items"].append({
-                    "description": description,
-                    "amount": amount,
-                    "quantity": float(quantity),
-                    "type": badge_type,
-                    "account": account_name
-                })
-                
-            processed_invoices.append(formatted_payload)
-            
+                    detailed = api.get_invoice_details(invoice_id)
+                    if detailed:
+                        payload = detailed
+                except Exception as e:
+                    print(f"Warning: Failed to fetch details for invoice {invoice_id}: {e}")
+
+            formatted = format_glueup_invoice(payload)
+            processed_invoices.append(formatted)
+
         return jsonify({
             "status": "success", 
-            "message": f"Fetched and processed {len(processed_invoices)} invoices for today",
+            "message": f"Fetched and processed {len(processed_invoices)} live invoices from Glue Up API",
+            "source": "live",
             "data": processed_invoices
         })
     except Exception as e:
@@ -170,3 +308,4 @@ def fetch_invoices():
 def show_invoices():
     """Shows the invoices page UI"""
     return render_template("invoices.html")
+

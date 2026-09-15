@@ -4,26 +4,54 @@
 
 {% block content %}
 <div class="card shadow-sm border-0 rounded-4 overflow-hidden mb-4">
-    <div class="card-header bg-white border-bottom pt-4 pb-3 px-4 d-flex align-items-center justify-content-between">
-        <h4 class="mb-0 fw-bold text-primary"><i class="fa-solid fa-file-invoice-dollar me-2"></i>Invoices & Sync</h4>
+    <div class="card-header bg-white border-bottom pt-4 pb-3 px-4 d-flex flex-wrap align-items-center justify-content-between gap-3">
         <div>
-            <button id="fetchBtn" class="btn btn-primary rounded-pill shadow-sm px-4" onclick="fetchInvoices()">
-                <i class="fa-solid fa-sync me-2"></i>Fetch API
+            <h4 class="mb-1 fw-bold text-primary"><i class="fa-solid fa-file-invoice-dollar me-2"></i>Invoices & Xero Sync</h4>
+            <div class="d-flex flex-wrap align-items-center gap-2 mt-1">
+                <span class="badge bg-primary-subtle text-primary border" id="modeBadge">
+                    <i class="fa-solid fa-bolt me-1"></i>Mock Data (Glue Up Model)
+                </span>
+                <span class="text-muted small">&bull;</span>
+                <span id="xeroConnectionBadge" class="badge bg-secondary-subtle text-secondary border">
+                    <span class="spinner-border spinner-border-sm me-1" style="width: 0.7rem; height: 0.7rem;" role="status"></span>Checking Xero...
+                </span>
+                <span class="text-muted small">&bull;</span>
+                <div class="form-check form-switch mb-0">
+                    <input class="form-check-input" type="checkbox" id="demoSyncToggle">
+                    <label class="form-check-label small text-secondary" for="demoSyncToggle" title="Simulate sync without contacting live Xero">
+                        <i class="fa-solid fa-flask me-1"></i>Dry-Run Simulation
+                    </label>
+                </div>
+            </div>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            <button id="mockBtn" class="btn btn-primary rounded-pill shadow-sm px-4" onclick="setMode('mock')">
+                <i class="fa-solid fa-bolt me-2"></i>Load Mock Data
             </button>
+            <button id="liveBtn" class="btn btn-outline-primary rounded-pill shadow-sm px-4" onclick="setMode('live')">
+                <i class="fa-solid fa-cloud-arrow-down me-2"></i>Fetch Live API
+            </button>
+            <span id="xeroAuthAction"></span>
         </div>
     </div>
     <div class="card-body p-4">
-        <p class="text-secondary fs-5 mb-4">Fetch new and historical invoices from Glue Up. Our backend automatically parses line items and assigns them to the correct Xero accounting codes before syncing.</p>
+        <!-- Live Alert Banner for Xero Connection or Errors -->
+        <div id="xeroGlobalBanner"></div>
+
+        <p class="text-secondary fs-6 mb-4">
+            Manage Glue Up member invoices and sync them to Xero. Line items are automatically categorized and mapped to Xero Chart of Account codes (<strong>2004</strong> Nominated Subscriptions, <strong>2005</strong> Additional Members, <strong>200</strong> Sales).
+            Every sync request actively verifies your live Xero connection.
+        </p>
         
-        <div class="bg-light rounded-4 p-4 mb-4" id="filterBar" style="display: none;">
+        <div class="bg-light rounded-4 p-4 mb-4" id="filterBar">
             <div class="row g-3">
-                <div class="col-md-2">
+                <div class="col-md-2" id="dateFromCol">
                     <label class="form-label text-muted small fw-bold text-uppercase">From Date</label>
-                    <input type="date" class="form-control border-0 shadow-sm" id="fromDate" onchange="fetchInvoices()">
+                    <input type="date" class="form-control border-0 shadow-sm" id="fromDate" onchange="triggerFetch()">
                 </div>
-                <div class="col-md-2">
+                <div class="col-md-2" id="dateToCol">
                     <label class="form-label text-muted small fw-bold text-uppercase">To Date</label>
-                    <input type="date" class="form-control border-0 shadow-sm" id="toDate" onchange="fetchInvoices()">
+                    <input type="date" class="form-control border-0 shadow-sm" id="toDate" onchange="triggerFetch()">
                 </div>
                 <div class="col-md-2">
                     <label class="form-label text-muted small fw-bold text-uppercase">Status</label>
@@ -42,6 +70,8 @@
                         <option value="all">All Line Items</option>
                         <option value="Membership Application">Membership App</option>
                         <option value="Additional Member">Additional Member</option>
+                        <option value="Event Ticket">Event Ticket</option>
+                        <option value="Custom / Sponsorship">Custom / Sponsorship</option>
                     </select>
                 </div>
                 <div class="col-md-2">
@@ -53,13 +83,16 @@
                 </div>
                 <div class="col-md-2">
                     <label class="form-label text-muted small fw-bold text-uppercase">Search</label>
-                    <input type="text" class="form-control border-0 shadow-sm" id="filterSearch" placeholder="Invoice ID..." onkeyup="applyFilters()">
+                    <input type="text" class="form-control border-0 shadow-sm" id="filterSearch" placeholder="Invoice, Company..." onkeyup="applyFilters()">
                 </div>
             </div>
         </div>
         
         <div id="output">
-            <div class="p-4 text-center text-muted fs-5"><i class="fa-solid fa-sleepy"></i> Waiting for action...</div>
+            <div class="p-5 text-center text-muted fs-5">
+                <div class="spinner-border text-primary mb-3" role="status"></div>
+                <div>Loading invoices...</div>
+            </div>
         </div>
     </div>
 </div>
@@ -67,15 +100,46 @@
 
 {% block extra_js %}
 <script>
+    let currentMode = 'mock'; // 'mock' or 'live'
     let allInvoices = [];
+
+    function setMode(mode) {
+        currentMode = mode;
+        const mockBtn = document.getElementById('mockBtn');
+        const liveBtn = document.getElementById('liveBtn');
+        const modeBadge = document.getElementById('modeBadge');
+
+        if (mode === 'mock') {
+            mockBtn.classList.remove('btn-outline-primary');
+            mockBtn.classList.add('btn-primary');
+            liveBtn.classList.remove('btn-primary');
+            liveBtn.classList.add('btn-outline-primary');
+            modeBadge.className = 'badge bg-primary-subtle text-primary border';
+            modeBadge.innerHTML = '<i class="fa-solid fa-bolt me-1"></i>Mock Data (Glue Up Model)';
+        } else {
+            liveBtn.classList.remove('btn-outline-primary');
+            liveBtn.classList.add('btn-primary');
+            mockBtn.classList.remove('btn-primary');
+            mockBtn.classList.add('btn-outline-primary');
+            modeBadge.className = 'badge bg-success-subtle text-success border';
+            modeBadge.innerHTML = '<i class="fa-solid fa-globe me-1"></i>Live Glue Up API';
+        }
+
+        fetchInvoices();
+    }
+
+    function triggerFetch() {
+        fetchInvoices();
+    }
 
     async function fetchInvoices() {
         const output = document.getElementById('output');
         const fromDateInput = document.getElementById('fromDate');
         const toDateInput = document.getElementById('toDate');
-        const fetchBtn = document.getElementById('fetchBtn');
+        const activeBtn = currentMode === 'mock' ? document.getElementById('mockBtn') : document.getElementById('liveBtn');
+        const originalBtnHtml = activeBtn ? activeBtn.innerHTML : '';
         
-        // Default to this month if empty
+        // Populate default date inputs if empty
         if (!fromDateInput.value || !toDateInput.value) {
             const today = new Date();
             const yyyy = today.getFullYear();
@@ -89,37 +153,37 @@
         const fromDate = fromDateInput.value;
         const toDate = toDateInput.value;
         
-        if (fetchBtn) {
-            fetchBtn.disabled = true;
-            fetchBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Fetching...';
+        if (activeBtn) {
+            activeBtn.disabled = true;
+            activeBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Loading...';
         }
         
-        let dateDesc = `between ${fromDate} and ${toDate}`;
+        let modeDesc = currentMode === 'mock' 
+            ? 'Generating realistic mockup data from Glue Up API schema...' 
+            : `Querying live Glue Up API for invoices between ${fromDate} and ${toDate}...`;
 
         output.innerHTML = `
             <div class="card border-0 bg-light bg-opacity-50 rounded-4 p-5 text-center">
                 <div class="spinner-border text-primary mb-3" style="width: 3rem; height: 3rem;" role="status"></div>
-                <h5 class="fw-bold text-dark">Fetching Invoices...</h5>
-                <p class="text-muted mb-0">Querying Glue Up for invoices issued ${dateDesc}.</p>
+                <h5 class="fw-bold text-dark">${currentMode === 'mock' ? 'Loading Mock Invoices' : 'Fetching Live Glue Up Invoices'}</h5>
+                <p class="text-muted mb-0">${modeDesc}</p>
             </div>
         `;
         
-        // Hide filters initially if we haven't loaded data yet, but keep it if we are just switching dates
-        if (allInvoices.length === 0) {
-            document.getElementById('filterBar').style.display = 'none';
-        }
-        
         try {
-            const response = await fetch(`/api/invoices/fetch?from_date=${fromDate}&to_date=${toDate}`);
+            const url = currentMode === 'mock' 
+                ? `/api/invoices/fetch?source=mock` 
+                : `/api/invoices/fetch?source=live&from_date=${fromDate}&to_date=${toDate}`;
+
+            const response = await fetch(url);
             const data = await response.json();
             
-            if (response.ok) {
+            if (response.ok && data.status === 'success') {
                 if (data.data && data.data.length > 0) {
                     allInvoices = data.data;
-                    document.getElementById('filterBar').style.display = 'flex';
                     applyFilters();
                     
-                    // Fire off background fetch for Xero statuses
+                    // Background fetch for Xero statuses
                     try {
                         const invoiceIds = allInvoices.map(inv => inv.invoice_id);
                         const statusResponse = await fetch('/api/xero/check_statuses', {
@@ -128,100 +192,184 @@
                             body: JSON.stringify({ invoice_ids: invoiceIds })
                         });
                         const statusData = await statusResponse.json();
-                        if (statusResponse.ok && statusData.status === 'success') {
+                        if (statusResponse.ok && statusData.status === 'success' && statusData.data) {
                             allInvoices.forEach(inv => {
-                                if (statusData.data[inv.invoice_id]) {
-                                    inv.xero_status = statusData.data[inv.invoice_id];
+                                if (statusData.data[String(inv.invoice_id)]) {
+                                    inv.xero_status = statusData.data[String(inv.invoice_id)];
                                 }
                             });
                             applyFilters();
                         }
                     } catch (e) {
-                        console.error('Failed to fetch Xero statuses:', e);
+                        console.error('Xero status lookup skipped:', e);
                     }
                 } else {
                     allInvoices = [];
-                    document.getElementById('filterBar').style.display = 'flex';
                     output.innerHTML = `
                         <div class="card border-0 bg-warning bg-opacity-10 rounded-4 p-5 text-center text-warning-emphasis">
                             <i class="fa-solid fa-face-frown fs-1 mb-3"></i>
-                            <h5 class="fw-bold">No valid invoices found ${dateDesc}</h5>
-                            <p class="mb-0">Voided invoices are excluded.</p>
+                            <h5 class="fw-bold">No invoices found for the selected period</h5>
+                            <p class="mb-3">Try adjusting your date range or switch back to Mock Data to test UI and syncing.</p>
+                            <div>
+                                <button class="btn btn-primary rounded-pill px-4" onclick="setMode('mock')">
+                                    <i class="fa-solid fa-bolt me-2"></i>Switch to Mock Data
+                                </button>
+                            </div>
                         </div>
                     `;
                 }
             } else {
-                output.innerHTML = `<div class="alert alert-danger shadow-sm rounded-4 border-0">Error: ${data.message}</div>`;
+                output.innerHTML = `<div class="alert alert-danger shadow-sm rounded-4 border-0">Error: ${data.message || 'Failed to load invoices'}</div>`;
             }
         } catch (error) {
             output.innerHTML = `<div class="alert alert-danger shadow-sm rounded-4 border-0">Network Error: ${error.message}</div>`;
         } finally {
-            if (fetchBtn) {
-                fetchBtn.disabled = false;
-                fetchBtn.innerHTML = '<i class="fa-solid fa-sync me-2"></i>Fetch API';
+            if (activeBtn) {
+                activeBtn.disabled = false;
+                activeBtn.innerHTML = originalBtnHtml;
             }
         }
     }
 
-    async function dummySync(btn, invoiceId) {
+    async function syncToXero(btn, invoiceId) {
         const originalHtml = btn.innerHTML;
+        const isDryRun = document.getElementById('demoSyncToggle').checked;
         
-        // Disable button and show spinner
         btn.disabled = true;
-        btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Syncing...';
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Syncing...';
         
-        // Find the invoice data
-        const invoiceData = allInvoices.find(inv => inv.invoice_id == invoiceId);
-        
+        const invoiceData = allInvoices.find(inv => String(inv.invoice_id) === String(invoiceId));
+        if (!invoiceData) {
+            alert("Invoice not found in memory.");
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+            return;
+        }
+
         try {
+            // Every sync request actively checks the live connection to Xero
             const response = await fetch('/api/xero/sync', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ invoice: invoiceData })
+                body: JSON.stringify({ 
+                    invoice: invoiceData,
+                    simulate: isDryRun
+                })
             });
             const data = await response.json();
             
-            if (response.status === 401 && data.auth_required) {
-                // Redirect to Xero login if not authenticated
-                window.location.href = data.login_url;
+            // 1. If live Xero connection is not authenticated
+            if (response.status === 401 || data.auth_required) {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+                
+                const output = document.getElementById('output');
+                const alertHtml = `
+                    <div class="alert alert-danger alert-dismissible fade show shadow-sm rounded-4 border-0 mb-4" role="alert">
+                        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+                            <div class="d-flex align-items-center">
+                                <i class="fa-solid fa-circle-exclamation fs-3 me-3 text-danger"></i>
+                                <div>
+                                    <div class="fw-bold fs-6">Xero Sync Blocked: Not Connected</div>
+                                    <div class="small">${data.message || 'You must connect your Xero account before syncing.'}</div>
+                                </div>
+                            </div>
+                            <div>
+                                <a href="${data.login_url || '/xero/login'}" class="btn btn-danger rounded-pill px-4 btn-sm shadow-sm">
+                                    <i class="fa-solid fa-arrow-up-right-from-square me-1"></i>Log In & Authorize Xero
+                                </a>
+                            </div>
+                        </div>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                `;
+                output.insertAdjacentHTML('afterbegin', alertHtml);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+                checkXeroStatus();
+                return;
+            }
+
+            // 2. If sync failed or was rejected by Xero API validation
+            if (!response.ok || data.status !== 'success') {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+
+                const output = document.getElementById('output');
+                const errMsg = data.message || 'Xero synchronization failed.';
+                const alertHtml = `
+                    <div class="alert alert-danger alert-dismissible fade show shadow-sm rounded-4 border-0 mb-4" role="alert">
+                        <div class="d-flex align-items-center">
+                            <i class="fa-solid fa-triangle-exclamation fs-3 me-3 text-danger"></i>
+                            <div>
+                                <div class="fw-bold fs-6">Xero Sync Failed</div>
+                                <div class="small">${errMsg}</div>
+                            </div>
+                        </div>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                `;
+                output.insertAdjacentHTML('afterbegin', alertHtml);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
                 return;
             }
             
-            if (response.ok) {
-                btn.innerHTML = '<i class="fa-solid fa-check"></i> Synced';
-                btn.classList.remove('btn-outline-success');
+            // 3. Sync succeeded
+            if (data.status === 'success') {
+                btn.innerHTML = '<i class="fa-solid fa-check me-1"></i> Synced';
+                btn.classList.remove('btn-outline-success', 'btn-primary');
                 btn.classList.add('btn-success');
                 
-                // Show alert in output
+                // Update local status badge
+                if (data.xero_status) {
+                    invoiceData.xero_status = data.xero_status;
+                } else if (invoiceData.status === 'Paid') {
+                    invoiceData.xero_status = 'PAID';
+                } else {
+                    invoiceData.xero_status = 'AUTHORISED';
+                }
+                
+                // Show notification banner
                 const output = document.getElementById('output');
-                const alertHtml = `<div class="alert alert-success alert-dismissible fade show" role="alert">
-                    <strong><i class="fa-solid fa-cloud-arrow-up"></i> Sync Complete!</strong> Successfully synced Invoice #${invoiceId} to Xero.
-                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-                </div>`;
+                const badgeMode = data.simulated 
+                    ? '<span class="badge bg-warning text-dark me-2">Dry-Run Simulation</span>' 
+                    : '<span class="badge bg-success me-2">Live Xero</span>';
+
+                const xeroLinkHtml = data.xero_url 
+                    ? `<div class="mt-2"><a href="${data.xero_url}" target="_blank" class="btn btn-sm btn-outline-success rounded-pill px-3"><i class="fa-solid fa-arrow-up-right-from-square me-1"></i>View in Xero (#${data.xero_number || invoiceData.invoice_number})</a></div>`
+                    : '';
+
+                const alertHtml = `
+                    <div class="alert alert-success alert-dismissible fade show shadow-sm rounded-4 border-0 mb-4" role="alert">
+                        <div class="d-flex align-items-center">
+                            <i class="fa-solid fa-circle-check fs-4 me-3 text-success"></i>
+                            <div>
+                                <div class="fw-bold">${badgeMode}Sync Successful!</div>
+                                <div class="small">${data.message}</div>
+                                ${xeroLinkHtml}
+                            </div>
+                        </div>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                `;
                 output.insertAdjacentHTML('afterbegin', alertHtml);
-            } else {
-                alert("Failed to sync: " + data.message);
-                btn.innerHTML = originalHtml;
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+                
+                // Re-render to update the status pill on the card
+                setTimeout(() => {
+                    applyFilters();
+                }, 1000);
             }
         } catch (error) {
             alert("Network error: " + error.message);
+            btn.disabled = false;
             btn.innerHTML = originalHtml;
         }
-        
-        setTimeout(() => {
-            if (btn.classList.contains('btn-success')) {
-                btn.disabled = false;
-                btn.innerHTML = originalHtml;
-                btn.classList.remove('btn-success');
-                btn.classList.add('btn-outline-success');
-            }
-        }, 3000);
     }
 
     function applyFilters() {
         const statusFilter = document.getElementById('filterStatus').value;
         const typeFilter = document.getElementById('filterType').value;
-        const searchFilter = document.getElementById('filterSearch').value.toLowerCase();
+        const searchFilter = document.getElementById('filterSearch').value.toLowerCase().trim();
         
         const minAmountVal = document.getElementById('filterMin').value;
         const maxAmountVal = document.getElementById('filterMax').value;
@@ -229,36 +377,43 @@
         const maxAmount = maxAmountVal ? parseFloat(maxAmountVal) : null;
         
         const filtered = allInvoices.filter(invoice => {
-            // Check Status filter
+            // 1. Status filter
             if (statusFilter !== 'all' && invoice.status !== statusFilter) {
                 return false;
             }
             
-            // Check Type filter
+            // 2. Type filter
             if (typeFilter !== 'all') {
                 const hasType = invoice.items.some(item => item.type === typeFilter);
                 if (!hasType) return false;
             }
             
-            // Check Amount Range filter
+            // 3. Amount Range filter
             if (minAmount !== null || maxAmount !== null) {
-                // Calculate invoice total
                 let total = 0;
                 invoice.items.forEach(item => total += (parseFloat(item.amount) || 0));
-                
                 if (minAmount !== null && total < minAmount) return false;
                 if (maxAmount !== null && total > maxAmount) return false;
             }
             
-            // Check Search filter
+            // 4. Search filter (ID, Number, Company, Contact, Item Description)
             if (searchFilter) {
                 const matchId = String(invoice.invoice_id).toLowerCase().includes(searchFilter);
+                const matchNum = String(invoice.invoice_number || '').toLowerCase().includes(searchFilter);
+                const matchCompany = String(invoice.company_name || '').toLowerCase().includes(searchFilter);
+                const matchContact = String(invoice.contact_name || '').toLowerCase().includes(searchFilter);
+                const matchEmail = String(invoice.contact_email || '').toLowerCase().includes(searchFilter);
+                const matchPhone = String(invoice.contact_phone || '').toLowerCase().includes(searchFilter);
+                const matchAddress = invoice.billing_address ? 
+                    `${invoice.billing_address.address_line1 || ''} ${invoice.billing_address.city || ''} ${invoice.billing_address.postal_code || ''}`.toLowerCase().includes(searchFilter) : false;
                 const matchItems = invoice.items.some(item => 
-                    item.description.toLowerCase().includes(searchFilter) || 
-                    item.account.toLowerCase().includes(searchFilter)
+                    String(item.description || '').toLowerCase().includes(searchFilter) || 
+                    String(item.account || '').toLowerCase().includes(searchFilter)
                 );
                 
-                if (!matchId && !matchItems) return false;
+                if (!matchId && !matchNum && !matchCompany && !matchContact && !matchEmail && !matchPhone && !matchAddress && !matchItems) {
+                    return false;
+                }
             }
             
             return true;
@@ -271,9 +426,14 @@
         if (invoices.length === 0) {
             document.getElementById('output').innerHTML = `
                 <div class="card border-0 bg-warning bg-opacity-10 rounded-4 p-5 text-center text-warning-emphasis">
-                    <i class="fa-solid fa-face-frown fs-1 mb-3"></i>
-                    <h5 class="fw-bold">No invoices match your filters</h5>
-                    <p class="mb-0">Try adjusting your status, type, or amount range.</p>
+                    <i class="fa-solid fa-filter-circle-xmark fs-1 mb-3"></i>
+                    <h5 class="fw-bold">No invoices match your active filters</h5>
+                    <p class="mb-3">Try adjusting the status, type, or search term.</p>
+                    <div>
+                        <button class="btn btn-outline-secondary btn-sm rounded-pill px-3" onclick="resetFilters()">
+                            Reset Filters
+                        </button>
+                    </div>
                 </div>
             `;
             return;
@@ -281,86 +441,126 @@
 
         let html = '<div class="row g-4">';
         
-        invoices.forEach((invoice, index) => {
+        invoices.forEach(invoice => {
             let itemsHtml = '';
             let total = 0;
             
             invoice.items.forEach(item => {
                 let typeBadge = '';
                 if (item.type === 'Additional Member') {
-                    typeBadge = '<span class="badge bg-warning text-dark ms-2" style="font-size: 0.7em;">Additional Member</span>';
+                    typeBadge = '<span class="badge bg-warning text-dark ms-1" style="font-size: 0.7em;">Additional Member</span>';
                 } else if (item.type === 'Membership Application') {
-                    typeBadge = '<span class="badge bg-success ms-2" style="font-size: 0.7em;">Membership App</span>';
+                    typeBadge = '<span class="badge bg-success ms-1" style="font-size: 0.7em;">Membership App</span>';
+                } else if (item.type === 'Event Ticket') {
+                    typeBadge = '<span class="badge bg-info text-dark ms-1" style="font-size: 0.7em;">Event Ticket</span>';
+                } else if (item.type === 'Custom / Sponsorship') {
+                    typeBadge = '<span class="badge bg-purple text-dark ms-1" style="font-size: 0.7em; background-color: #e0d4fc;">Sponsorship</span>';
                 } else if (item.type !== 'Standard') {
-                    typeBadge = `<span class="badge bg-secondary ms-2" style="font-size: 0.7em;">${item.type}</span>`;
+                    typeBadge = `<span class="badge bg-secondary ms-1" style="font-size: 0.7em;">${item.type}</span>`;
                 }
                 
                 let amount = parseFloat(item.amount) || 0;
+                let quantity = parseFloat(item.quantity) || 1;
                 total += amount;
                 
                 itemsHtml += `
-                    <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-light">
-                        <div>
-                            <div class="fw-semibold text-dark" style="font-size: 0.95em;">${item.description} ${typeBadge}</div>
-                            <small class="text-muted"><i class="fa-solid fa-tag fa-sm me-1"></i>${item.account}</small>
+                    <div class="d-flex justify-content-between align-items-start mb-2 pb-2 border-bottom border-light">
+                        <div class="pe-2">
+                            <div class="fw-semibold text-dark" style="font-size: 0.9em;">
+                                ${quantity > 1 ? `<span class="badge bg-light text-secondary border me-1">${quantity}x</span>` : ''}
+                                ${item.description} ${typeBadge}
+                            </div>
+                            <small class="text-muted" style="font-size: 0.75rem;"><i class="fa-solid fa-tag fa-xs me-1"></i>${item.account}</small>
                         </div>
-                        <div class="fw-bold text-end font-monospace">
-                            $${amount.toFixed(2)}
+                        <div class="fw-bold text-end font-monospace text-nowrap" style="font-size: 0.95em;">
+                            $${amount.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                     </div>
                 `;
             });
             
-            // Format the date if it's a timestamp string or ISO
-            let displayDate = invoice.date;
-            if (displayDate.length > 10) {
-                displayDate = displayDate.substring(0, 10);
-            }
+            let displayDate = invoice.date ? String(invoice.date).substring(0, 10) : 'N/A';
+            let displayDueDate = invoice.due_date ? String(invoice.due_date).substring(0, 10) : displayDate;
             
             let statusBadge = '';
             if (invoice.status === 'Paid') {
-                statusBadge = '<span class="badge bg-success ms-2">Paid</span>';
+                statusBadge = '<span class="badge bg-success-subtle text-success border border-success-subtle ms-2">Paid</span>';
             } else if (invoice.status === 'Overdue') {
-                statusBadge = '<span class="badge bg-danger ms-2">Overdue</span>';
+                statusBadge = '<span class="badge bg-danger-subtle text-danger border border-danger-subtle ms-2">Overdue</span>';
             } else if (invoice.status === 'Void') {
-                statusBadge = '<span class="badge bg-secondary ms-2">Void</span>';
+                statusBadge = '<span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle ms-2">Void</span>';
             } else if (invoice.status === 'Draft') {
-                statusBadge = '<span class="badge bg-info text-dark ms-2">Draft</span>';
+                statusBadge = '<span class="badge bg-info-subtle text-info border border-info-subtle ms-2">Draft</span>';
             } else {
-                statusBadge = '<span class="badge bg-warning text-dark ms-2">Awaiting Payment</span>';
+                statusBadge = '<span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle ms-2">Awaiting Payment</span>';
             }
             
             let xeroBadge = '';
             if (invoice.xero_status) {
-                let xeroColor = 'secondary';
-                if (invoice.xero_status === 'PAID') xeroColor = 'success';
-                else if (invoice.xero_status === 'AUTHORISED') xeroColor = 'primary';
-                else if (invoice.xero_status === 'DRAFT') xeroColor = 'info';
+                let xColor = 'secondary';
+                if (invoice.xero_status === 'PAID') xColor = 'success';
+                else if (invoice.xero_status === 'AUTHORISED') xColor = 'primary';
+                else if (invoice.xero_status === 'DRAFT') xColor = 'info';
+                else if (invoice.xero_status === 'VOIDED') xColor = 'dark';
                 
-                xeroBadge = `<div class="mt-2 text-end"><small class="text-muted" style="font-size: 0.75rem;">Xero Status: <span class="badge bg-${xeroColor}-subtle text-${xeroColor} border border-${xeroColor}-subtle">${invoice.xero_status}</span></small></div>`;
+                xeroBadge = `<span class="badge bg-${xColor}-subtle text-${xColor} border border-${xColor}-subtle" style="font-size: 0.72rem;"><i class="fa-solid fa-cloud-check me-1"></i>Xero: ${invoice.xero_status}</span>`;
+            } else {
+                xeroBadge = `<span class="badge bg-light text-muted border" style="font-size: 0.72rem;"><i class="fa-solid fa-cloud me-1"></i>Xero: Not Synced</span>`;
             }
             
             html += `
             <div class="col-md-6 col-lg-4">
-                <div class="card h-100 shadow-sm border-0 rounded-4 overflow-hidden">
+                <div class="card h-100 shadow-sm border-0 rounded-4 overflow-hidden d-flex flex-column">
                     <div class="card-header bg-white border-bottom-0 pt-4 pb-2 px-4">
                         <div class="d-flex justify-content-between align-items-center mb-2">
-                            <h6 class="mb-0 text-primary fw-bold"><i class="fa-solid fa-file-invoice-dollar me-2"></i>#${invoice.invoice_id} ${statusBadge}</h6>
-                            <span class="badge bg-light text-secondary border"><i class="fa-regular fa-clock me-1"></i>${displayDate}</span>
+                            <div>
+                                <span class="fw-bold text-primary font-monospace fs-6">#${invoice.invoice_id}</span>
+                                ${invoice.invoice_number ? `<span class="badge bg-light text-dark border ms-1 font-monospace" style="font-size: 0.7rem;">${invoice.invoice_number}</span>` : ''}
+                                ${statusBadge}
+                            </div>
+                            <span class="badge bg-light text-secondary border" title="Issue Date">
+                                <i class="fa-regular fa-calendar me-1"></i>${displayDate}
+                            </span>
                         </div>
-                        ${xeroBadge}
-                        <button class="btn btn-outline-success btn-sm w-100 mt-2" onclick="dummySync(this, '${invoice.invoice_id}')">
-                            <i class="fa-solid fa-cloud-arrow-up"></i> Sync to Xero
-                        </button>
+                        
+                        <div class="mt-2 mb-1">
+                            <div class="fw-bold text-dark text-truncate" title="${invoice.company_name || ''}">
+                                <i class="fa-solid fa-building me-1 text-secondary"></i>${invoice.company_name || 'Individual Member'}
+                            </div>
+                            ${invoice.contact_name ? `
+                                <div class="text-muted small text-truncate" title="${invoice.contact_name}">
+                                    <i class="fa-regular fa-user me-1 text-secondary"></i><strong>${invoice.contact_name}</strong>
+                                    ${invoice.contact_email ? ` &bull; <span class="text-secondary">${invoice.contact_email}</span>` : ''}
+                                    ${invoice.contact_phone ? ` &bull; <span class="text-secondary"><i class="fa-solid fa-phone me-1 text-secondary"></i>${invoice.contact_phone}</span>` : ''}
+                                </div>
+                            ` : ''}
+                            ${invoice.billing_address && (invoice.billing_address.address_line1 || invoice.billing_address.city) ? `
+                                <div class="text-muted small text-truncate mt-1" style="font-size: 0.78rem;" title="${[invoice.billing_address.address_line1, invoice.billing_address.city, invoice.billing_address.region, invoice.billing_address.postal_code, invoice.billing_address.country].filter(Boolean).join(', ')}">
+                                    <i class="fa-solid fa-location-dot me-1 text-danger"></i>${[invoice.billing_address.address_line1, invoice.billing_address.city, invoice.billing_address.region, invoice.billing_address.postal_code].filter(Boolean).join(', ')}
+                                </div>
+                            ` : ''}
+                        </div>
+
+                        <div class="d-flex justify-content-between align-items-center mt-3 pt-2 border-top">
+                            <div>${xeroBadge}</div>
+                            <small class="text-muted" style="font-size: 0.75rem;" title="Payment Due Date">
+                                Due: <strong>${displayDueDate}</strong>
+                            </small>
+                        </div>
                     </div>
-                    <div class="card-body px-4 pt-2 pb-4">
-                        <div class="bg-light bg-opacity-50 p-3 rounded-3 border">
+                    <div class="card-body px-4 pt-2 pb-4 d-flex flex-column justify-content-between">
+                        <div class="bg-light bg-opacity-50 p-3 rounded-3 border mb-3">
                             ${itemsHtml}
                             <div class="d-flex justify-content-between align-items-center pt-2 mt-1">
-                                <span class="fw-bold text-uppercase text-muted" style="letter-spacing: 1px; font-size: 0.85em;">Total Amount</span>
-                                <span class="fw-bolder fs-5 text-success font-monospace">$${total.toFixed(2)}</span>
+                                <span class="fw-bold text-uppercase text-muted" style="letter-spacing: 0.5px; font-size: 0.8em;">Total (Inc. GST)</span>
+                                <span class="fw-bolder fs-5 text-success font-monospace">
+                                    $${total.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </span>
                             </div>
                         </div>
+                        <button class="btn btn-outline-success btn-sm w-100 rounded-pill py-2 shadow-sm" onclick="syncToXero(this, '${invoice.invoice_id}')">
+                            <i class="fa-solid fa-cloud-arrow-up me-1"></i> Sync to Xero
+                        </button>
                     </div>
                 </div>
             </div>
@@ -371,16 +571,124 @@
         
         let headerHtml = `
             <div class="d-flex justify-content-between align-items-center mb-4 pb-2 border-bottom">
-                <h6 class="text-muted mb-0">Showing <span class="badge bg-primary rounded-pill">${invoices.length}</span> of ${totalCount} valid invoices</h6>
+                <div class="text-muted small">
+                    Showing <span class="badge bg-primary rounded-pill px-2">${invoices.length}</span> of <strong>${totalCount}</strong> invoices 
+                    <span class="badge bg-light text-secondary border ms-2">${currentMode === 'mock' ? '⚡ Mock Data' : '🌐 Live Glue Up'}</span>
+                </div>
+                <div>
+                    <button class="btn btn-link btn-sm text-decoration-none text-muted" onclick="resetFilters()">
+                        <i class="fa-solid fa-rotate-left me-1"></i>Reset Filters
+                    </button>
+                </div>
             </div>
         `;
         
         document.getElementById('output').innerHTML = headerHtml + html;
     }
 
-    // Automatically fetch invoices when the page loads
+    function resetFilters() {
+        document.getElementById('filterStatus').value = 'all';
+        document.getElementById('filterType').value = 'all';
+        document.getElementById('filterSearch').value = '';
+        document.getElementById('filterMin').value = '';
+        document.getElementById('filterMax').value = '';
+        applyFilters();
+    }
+
+    async function checkXeroStatus() {
+        const badge = document.getElementById('xeroConnectionBadge');
+        const actionSpan = document.getElementById('xeroAuthAction');
+        if (!badge) return;
+
+        try {
+            const res = await fetch('/api/xero/connection-status');
+            const data = await res.json();
+            
+            if (res.ok && data.connected) {
+                badge.className = 'badge bg-success-subtle text-success border border-success-subtle';
+                badge.innerHTML = `<i class="fa-solid fa-circle-check me-1"></i>Xero: Connected (${data.tenant_name || 'Organization'})`;
+                if (actionSpan) {
+                    actionSpan.innerHTML = `<a href="/xero/disconnect" class="btn btn-outline-danger btn-sm rounded-pill px-3" title="Disconnect Xero session"><i class="fa-solid fa-unlink me-1"></i>Disconnect Xero</a>`;
+                }
+            } else {
+                badge.className = 'badge bg-danger-subtle text-danger border border-danger-subtle';
+                badge.innerHTML = `<i class="fa-solid fa-circle-xmark me-1"></i>Xero: Disconnected`;
+                if (actionSpan) {
+                    actionSpan.innerHTML = `<a href="/xero/login" class="btn btn-primary btn-sm rounded-pill px-3 shadow-sm"><i class="fa-solid fa-link me-1"></i>Connect Xero</a>`;
+                }
+            }
+        } catch (e) {
+            badge.className = 'badge bg-secondary-subtle text-secondary border';
+            badge.innerHTML = `<i class="fa-solid fa-circle-question me-1"></i>Xero: Offline`;
+        }
+    }
+
+    // Automatically initialize on page load
     document.addEventListener('DOMContentLoaded', () => {
-        fetchInvoices();
+        // 1. Check URL parameters for OAuth redirect notices
+        const urlParams = new URLSearchParams(window.location.search);
+        const bannerContainer = document.getElementById('xeroGlobalBanner');
+        
+        if (urlParams.get('xero_connected') === 'true') {
+            bannerContainer.innerHTML = `
+                <div class="alert alert-success alert-dismissible fade show shadow-sm rounded-4 border-0 mb-4" role="alert">
+                    <div class="d-flex align-items-center">
+                        <i class="fa-solid fa-circle-check fs-4 me-3 text-success"></i>
+                        <div>
+                            <div class="fw-bold">Connected to Xero Successfully!</div>
+                            <div class="small">Your session is authenticated and live invoice syncing is now active.</div>
+                        </div>
+                    </div>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>
+            `;
+            // Clean URL query parameter
+            window.history.replaceState({}, document.title, window.location.pathname);
+        } else if (urlParams.get('xero_error')) {
+            const errCode = urlParams.get('xero_error');
+            const errMsg = urlParams.get('xero_msg') || 'Xero authorization was cancelled or encountered an error.';
+            bannerContainer.innerHTML = `
+                <div class="alert alert-warning alert-dismissible fade show shadow-sm rounded-4 border-0 mb-4" role="alert">
+                    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                        <div class="d-flex align-items-center">
+                            <i class="fa-solid fa-triangle-exclamation fs-4 me-3 text-warning"></i>
+                            <div>
+                                <div class="fw-bold">Xero Authorization Notice</div>
+                                <div class="small">${errMsg} (${errCode}). Invoices will not sync until Xero is connected.</div>
+                            </div>
+                        </div>
+                        <div>
+                            <a href="/xero/login" class="btn btn-warning rounded-pill btn-sm px-3 text-dark fw-bold">
+                                Try Again
+                            </a>
+                        </div>
+                    </div>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>
+            `;
+            window.history.replaceState({}, document.title, window.location.pathname);
+        } else if (urlParams.get('xero_disconnected') === 'true') {
+            bannerContainer.innerHTML = `
+                <div class="alert alert-info alert-dismissible fade show shadow-sm rounded-4 border-0 mb-4" role="alert">
+                    <div class="d-flex align-items-center">
+                        <i class="fa-solid fa-circle-info fs-4 me-3 text-info"></i>
+                        <div>
+                            <div class="fw-bold">Disconnected from Xero</div>
+                            <div class="small">You have been logged out of Xero. To sync live invoices, please reconnect your account.</div>
+                        </div>
+                    </div>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>
+            `;
+            window.history.replaceState({}, document.title, window.location.pathname);
+        }
+
+        // 2. Actively check Xero connection status
+        checkXeroStatus();
+
+        // 3. Load default data
+        setMode('mock');
     });
 </script>
 {% endblock %}
+
