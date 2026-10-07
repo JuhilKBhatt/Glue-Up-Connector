@@ -1,0 +1,35 @@
+{
+  "title": "Glue Up & Xero API Connector",
+  "description": "An enterprise integration suite and Flask automation dashboard connecting Glue Up CRM with Xero Accounting. Automates financial invoice ledger synchronization, HMAC-SHA256 digest signing, OAuth2 token lifecycle management, CRM dormant contact auditing, and historical activity data export.",
+  "techStack": {
+    "Frontend": [
+      "JavaScript",
+      "Jinja2"
+    ],
+    "Backend": [
+      "Python"
+    ],
+    "DevSecOps": [
+      "Docker",
+      "Render",
+      "Github"
+    ],
+    "Test Automation": []
+  },
+  "liveDemo": "",
+  "images": [],
+  "videoDemo": "",
+  "Priority": 2,
+  "category": "Web App",
+  "type": "Solo",
+  "version": "Prod",
+  "versionNumber": "1.5.1",
+  "Highlights": [
+    "Custom HMAC-SHA256 digest authentication client generating dynamic cryptographically-signed request headers with millisecond timestamp validation for Glue Up Open API v2",
+    "Seamless Xero Accounting integration via xero-python SDK featuring OAuth2 token exchange, automatic mid-sync token refresh, and duplicate invoice detection via reference keys",
+    "Financial reconciliation pipeline converting Glue Up final totals to tax-inclusive line items with dynamic GL chart of accounts code routing (codes 2004 and 2005)",
+    "CRM hygiene and dormant contact audit engine aggregating lifetime attendee histories across all historical organization events with enriched client-side Excel (.xlsx) export via SheetJS",
+    "Containerized multi-environment architecture with Docker Compose and Render web service deployment, secured via HTTP Basic Auth middleware and webhook signature verification"
+  ],
+  "Visibilty": true
+}
